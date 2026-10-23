@@ -4,7 +4,7 @@ jobs:
   mac:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Syntax (macOS bash 3.2)
         run: /bin/bash -n mac/easy-st.sh
       - name: ShellCheck

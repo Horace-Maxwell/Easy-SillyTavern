@@ -205,9 +205,9 @@ choose_sources() {
     step "检测网络，挑最快的下载源" "Checking the network and picking the fastest mirrors"
     detect_proxy
     if [ -n "$PROXY_URL" ]; then
-        ok "发现代理 $PROXY_URL，下载会走代理" "Using proxy $PROXY_URL"
+        ok "发现代理 ${PROXY_URL}，下载会走代理" "Using proxy $PROXY_URL"
     elif [ -n "${PROXY_DEAD:-}" ]; then
-        warn "系统代理设置成了 $PROXY_DEAD，但它没在运行，先不走代理" \
+        warn "系统代理设置成了 ${PROXY_DEAD}，但它没在运行，先不走代理" \
             "System proxy $PROXY_DEAD is set but not running; ignoring it"
     fi
     apply_proxy
@@ -307,7 +307,7 @@ install_node() {
         "Could not get the Node.js version list."
 
     file="node-$ver-darwin-$ARCH.tar.gz"
-    info "下载 Node.js $ver（$ARCH，约 50 MB）" "Downloading Node.js $ver ($ARCH, ~50 MB)"
+    info "下载 Node.js ${ver}（${ARCH}，约 50 MB）" "Downloading Node.js $ver ($ARCH, ~50 MB)"
     local got=""
     for base in $NODE_MIRRORS; do
         if fetch "$tmp/$file" "$base/$ver/$file" && fetch_quiet "$tmp/SHASUMS256.txt" "$base/$ver/SHASUMS256.txt"; then
@@ -386,7 +386,7 @@ EOF
 
     local tmp new="$APP_DIR.new"
     tmp="$(mktemp -d)"
-    info "下载酒馆 $ver（约 40 MB）" "Downloading SillyTavern $ver (~40 MB)"
+    info "下载酒馆 ${ver}（约 40 MB）" "Downloading SillyTavern $ver (~40 MB)"
     # 两个源的包是同一个文件，完整性校验值一样
     fetch "$tmp/st.tgz" "$url" "$NPM_FALLBACK/sillytavern/-/sillytavern-$ver.tgz" \
         || die "酒馆下载失败，请检查网络后重试。" "SillyTavern download failed."
@@ -604,7 +604,7 @@ cmd_start() {
         [ "${EST_NO_BROWSER:-}" = 1 ] || open "http://127.0.0.1:$port/"
         exit 0
     fi
-    port="$(free_port)" || die "端口 $PORT_FIRST～$PORT_LAST 都被占用了，重启电脑后再试。" \
+    port="$(free_port)" || die "端口 ${PORT_FIRST}～$PORT_LAST 都被占用了，重启电脑后再试。" \
         "Ports $PORT_FIRST-$PORT_LAST are all busy. Restart your Mac and try again."
     [ "$port" != "$PORT_FIRST" ] && warn "$PORT_FIRST 端口被别的程序占了，这次用 $port" \
         "Port $PORT_FIRST is busy, using $port"
@@ -649,7 +649,7 @@ EOF
 
     echo ""
     if [ "$code" -ne 0 ] && [ "$code" -ne 130 ] && [ "$code" -ne 143 ]; then
-        err "酒馆意外退出了（错误码 $code）。" "SillyTavern exited unexpectedly (code $code)."
+        err "酒馆意外退出了（错误码 ${code}）。" "SillyTavern exited unexpectedly (code $code)."
         info "运行记录：$log" "Log: $log"
         info "可以打开「酒馆工具箱」选「诊断」生成报告。" "Run diagnose from the toolbox for a report."
     else
@@ -678,7 +678,7 @@ cmd_backup() {
     step "备份聊天记录和设置" "Backing up your data"
     local f
     f="$(do_backup manual)" || die "备份失败。" "Backup failed."
-    ok "备份好了：$f（$(du -h "$f" | awk '{print $1}')）" "Backup saved: $f"
+    ok "备份好了：${f}（$(du -h "$f" | awk '{print $1}')）" "Backup saved: $f"
     open -R "$f" 2>/dev/null
 }
 
@@ -749,7 +749,7 @@ cmd_rollback() {
     local cur prev
     cur="$(st_version)"
     prev="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$APP_DIR.prev/package.json" | head -n 1)"
-    ask "从 $cur 退回到 $prev？" "Roll back from $cur to $prev?" y || return 0
+    ask "从 $cur 退回到 ${prev}？" "Roll back from $cur to $prev?" y || return 0
     mv "$APP_DIR" "$APP_DIR.rollback"
     mv "$APP_DIR.prev" "$APP_DIR"
     mv "$APP_DIR.rollback" "$APP_DIR.prev"
@@ -884,7 +884,7 @@ EOF
     detect_system
     step "检查这台 Mac" "Checking this Mac"
     info "macOS $MAC_VER · $( [ "$ARCH" = arm64 ] && t "Apple 芯片" "Apple silicon" || t "Intel 芯片" "Intel" )"
-    [ -n "$NODE_MAJOR" ] || die "这台 Mac 的系统太旧了（$MAC_VER），酒馆最低需要 macOS 10.15。" \
+    [ -n "$NODE_MAJOR" ] || die "这台 Mac 的系统太旧了（${MAC_VER}），酒馆最低需要 macOS 10.15。" \
         "macOS $MAC_VER is too old; SillyTavern needs macOS 10.15 or newer."
     [ "$NODE_MAJOR" = 20 ] && warn "系统比较旧，只能用 Node.js 20（已停止维护），建议升级 macOS。" \
         "Old macOS: falling back to Node.js 20, which is end-of-life."
