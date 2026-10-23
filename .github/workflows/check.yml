@@ -1,0 +1,13 @@
+name: check
+on: [push, pull_request]
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax (macOS bash 3.2)
+        run: /bin/bash -n mac/easy-st.sh
+      - name: ShellCheck
+        run: brew install shellcheck && shellcheck -s bash -S warning -e SC2155 mac/easy-st.sh
+      - name: Install end to end
+        run: EST_HOME="$RUNNER_TEMP/est" EST_YES=1 EST_NO_START=1 EST_NO_SHORTCUTS=1 /bin/bash mac/easy-st.sh install
