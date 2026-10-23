@@ -1129,9 +1129,16 @@ function cmd_backup {
 function backup_list {
     $items = @()
     $items += @(Get-ChildItem -Path "$BACKUP_DIR\*" -Include '*.zip', '*.tar.gz' -File -ErrorAction SilentlyContinue)
-    if ($EST_DESKTOP -and (Test-Path -LiteralPath $EST_DESKTOP)) {
-        # Mac 版做的 .tar.gz 备份也认，换电脑时直接拷过来就能恢复
-        $items += @(Get-ChildItem -Path "$EST_DESKTOP\*" -Include '酒馆数据备份-*.zip', '酒馆数据备份-*.tar.gz', 'SillyTavern-backup-*.zip', 'SillyTavern-backup-*.tar.gz' -File -ErrorAction SilentlyContinue)
+    $downloads = [string](regval 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders' '{374DE290-123F-4565-9164-39C4925E467B}')
+    if (-not $downloads) { $downloads = "$env:USERPROFILE\Downloads" }
+    # 桌面和下载文件夹（微信、浏览器存的文件常在这里）只认备份的文件名。
+    # Mac 版做的 .tar.gz 备份也认，换电脑时直接拷过来就能恢复
+    $names = @()
+    foreach ($p in @('酒馆数据备份', 'SillyTavern-backup', 'manual', 'auto', 'final')) { $names += "$p-*.zip"; $names += "$p-*.tar.gz" }
+    foreach ($d in @($EST_DESKTOP, $downloads)) {
+        if ($d -and (Test-Path -LiteralPath $d)) {
+            $items += @(Get-ChildItem -Path "$d\*" -Include $names -File -ErrorAction SilentlyContinue)
+        }
     }
     $items | Sort-Object LastWriteTime -Descending
 }

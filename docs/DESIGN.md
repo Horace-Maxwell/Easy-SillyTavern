@@ -53,7 +53,7 @@ SillyTavern-Easy/
 5. **配置**：没有 `config.yaml` 就复制 `app/default/config.yaml`，把 `git.backend` 改成 `builtin`
 6. **分词器**：`deepseek qwen2 nemo command-r command-a` 预先下到 `data/_cache/<名字>.json.gz`，失败不报错
 7. **导入旧数据**：`data/default-user` 还不存在时，找电脑上别的酒馆数据（见下），列出来让用户选编号，回车跳过
-8. **快捷方式**：桌面放「酒馆 SillyTavern」（start）和「酒馆工具箱」（menu）
+8. **快捷方式**：桌面放「酒馆 SillyTavern」（start）和「酒馆工具箱」（menu）。Mac 在安装目录里也总放一份；往桌面写失败（用户在系统弹窗里点了「不允许」）时提示去安装目录找，并打开那个文件夹
 9. 问「现在就启动吗？」，默认是
 
 ## 启动（start）
@@ -97,7 +97,7 @@ SillyTavern-Easy/
 3) 备份             data + config.yaml，排除 data/_cache、_webpack、_uploads
 4) 打开数据文件夹
 5) 从别的酒馆导入
-6) 从备份恢复       列 backups/ 和桌面上的备份，选编号；恢复前先备份当前
+6) 从备份恢复       列 backups/ 里的全部备份，加上桌面和下载文件夹里以 酒馆数据备份- SillyTavern-backup- manual- auto- final- 开头的 .zip / .tar.gz（两边的格式都认）；选编号；恢复前先备份当前
 7) 诊断
 8) 退回上一个版本   app ⇄ app.prev
 9) 卸载             先问要不要备份到桌面（默认要），再确认删除（默认不删）

@@ -550,17 +550,31 @@ install_self() {
     chmod +x "$SELF" 2>/dev/null
 }
 
+# write_launchers 文件夹：在这个文件夹里放「启动」和「工具箱」两个可以双击的文件
+write_launchers() {
+    local start tools
+    start="$1/$(t "酒馆 SillyTavern" "SillyTavern").command"
+    tools="$1/$(t "酒馆工具箱" "SillyTavern Toolbox").command"
+    { printf '#!/bin/bash\n# Easy SillyTavern：启动酒馆\nexec /bin/bash "%s" start\n' "$SELF" > "$start" &&
+      printf '#!/bin/bash\n# Easy SillyTavern：更新、备份、诊断、卸载\nexec /bin/bash "%s" menu\n' "$SELF" > "$tools" &&
+      chmod +x "$start" "$tools"; } 2>/dev/null || return 1
+    LAUNCHERS="$start|$tools"
+}
+
 make_shortcuts() {
     [ "${EST_NO_SHORTCUTS:-}" = 1 ] && return 0
-    [ -d "$EST_DESKTOP" ] || return 0
-    local start="$EST_DESKTOP/$(t "酒馆 SillyTavern" "SillyTavern").command"
-    local tools="$EST_DESKTOP/$(t "酒馆工具箱" "SillyTavern Toolbox").command"
-    printf '#!/bin/bash\n# Easy SillyTavern：启动酒馆\nexec /bin/bash "%s" start\n' "$SELF" > "$start"
-    printf '#!/bin/bash\n# Easy SillyTavern：更新、备份、诊断、卸载\nexec /bin/bash "%s" menu\n' "$SELF" > "$tools"
-    chmod +x "$start" "$tools"
-    state_set SHORTCUTS "$start|$tools"
-    ok "桌面上放好了「$(basename "$start" .command)」和「$(basename "$tools" .command)」" \
-        "Shortcuts created on the Desktop"
+    # 安装文件夹里总放一份，桌面上的被删了或者没放成，也能从这里找到
+    write_launchers "$EST_HOME"
+    # 第一次往桌面写文件时 macOS 会问「终端想访问桌面文件夹」，点了「不允许」就会失败
+    if [ -d "$EST_DESKTOP" ] && write_launchers "$EST_DESKTOP"; then
+        state_set SHORTCUTS "$LAUNCHERS"
+        ok "桌面上放好了「$(t "酒馆 SillyTavern" "SillyTavern")」和「$(t "酒馆工具箱" "SillyTavern Toolbox")」" \
+            "Shortcuts created on the Desktop"
+    else
+        warn "没能在桌面放图标（可能点了「不允许」）。以后打开「访达」，按 ⌘⇧H，进「SillyTavern-Easy」文件夹，双击里面的「酒馆 SillyTavern」" \
+            "Could not put shortcuts on the Desktop. Open Finder, press Cmd+Shift+H, go into SillyTavern-Easy and double-click \"SillyTavern\"."
+        open "$EST_HOME" 2>/dev/null
+    fi
 }
 
 # ------------------------------------------------------------- 启动 ---
@@ -684,9 +698,21 @@ cmd_backup() {
 
 cmd_restore() {
     st_running_port >/dev/null && die "请先关掉酒馆再恢复。" "Close SillyTavern first."
-    local list n i=1 choice f tmp
-    list="$(ls -1t "$BACKUP_DIR"/*.tar.gz "$EST_DESKTOP"/酒馆数据备份-*.tar.gz \
-        "$EST_DESKTOP"/SillyTavern-backup-*.tar.gz 2>/dev/null)"
+    local list n i=1 choice f tmp d p ext cands=""
+    # 自己的 backups 里全部都算；桌面和下载文件夹（隔空投送、微信存的文件常在这里）只认备份的文件名。
+    # Windows 版做的 .zip 也认，换电脑时拷过来就能恢复
+    for ext in tar.gz zip; do
+        cands="$cands
+$BACKUP_DIR/*.$ext"
+        for d in "$EST_DESKTOP" "$HOME/Downloads"; do
+            for p in 酒馆数据备份 SillyTavern-backup manual auto final; do
+                cands="$cands
+$d/$p-*.$ext"
+            done
+        done
+    done
+    # shellcheck disable=SC2086
+    list="$(IFS=$'\n'; ls -1t $cands 2>/dev/null | awk '!seen[$0]++')"
     [ -n "$list" ] || { info "还没有备份。" "No backups yet."; return 0; }
     n="$(printf '%s\n' "$list" | wc -l | tr -d ' ')"
     step "选一个备份恢复（越靠上越新）" "Pick a backup to restore (newest first)"
@@ -701,7 +727,11 @@ cmd_restore() {
     [ "$choice" -ge 1 ] && [ "$choice" -le "$n" ] || return 0
     f="$(printf '%s\n' "$list" | sed -n "${choice}p")"
     tmp="$(mktemp -d)"
-    tar -xzf "$f" -C "$tmp" data 2>/dev/null && [ -d "$tmp/data" ] || { rm -rf "$tmp"; die "这个备份文件打不开。" "Cannot read this backup."; }
+    case "$f" in
+        *.zip) ditto -x -k "$f" "$tmp" 2>/dev/null ;;
+        *)     tar -xzf "$f" -C "$tmp" data 2>/dev/null ;;
+    esac
+    [ -d "$tmp/data" ] || { rm -rf "$tmp"; die "这个备份文件打不开。" "Cannot read this backup."; }
     # 恢复前 import_data 会先把现在的数据再备份一份，恢复错了还能回来
     import_data "$tmp/data" "$(basename "$f")"
     rm -rf "$tmp"
