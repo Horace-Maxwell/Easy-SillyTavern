@@ -30,7 +30,7 @@ SillyTavern-Easy/
 ├── app.prev/           上一个版本，用于退回
 ├── data/               --dataRoot，用户数据，更新不动
 ├── config.yaml         --configPath
-├── backups/            auto-*.tar.gz（只留 5 份）、manual-*.tar.gz
+├── backups/            auto-*（只留 5 份）、manual-*；Mac 是 .tar.gz，Windows 是 .zip
 └── logs/st-*.log       最近 5 次运行记录
 ```
 
@@ -45,7 +45,7 @@ SillyTavern-Easy/
    - **不用第三方 GitHub 加速代理**（ghproxy 之类），没法校验内容
 3. **Node.js**：从 `index.json` 取对应大版本的最新版，下载后用 `SHASUMS256.txt` 校验
    - macOS：≥ 13.5 → 24；11～13.4 → 22；10.15 → 20（提示已停止维护）；更旧 → 拒绝
-   - Windows：10 / 11 → 24（x64 或 arm64 的 zip）
+   - Windows：10 / 11 → 24（x64 或 arm64 的 zip；CPU 看注册表里的 `PROCESSOR_ARCHITECTURE`，ARM 电脑上模拟运行的 PowerShell 会谎报 AMD64）；32 位系统 → 22（Node 23 起没有 32 位版）；更旧 → 拒绝
 4. **SillyTavern**：取 `sillytavern/latest` 的 `version`、`dist.tarball`、`dist.integrity`，下载后用 integrity 校验，解到 `app.new/`
    - npm 包里没有 `package-lock.json`：从 GitHub 拿 `SillyTavern/SillyTavern@<版本>/package-lock.json`，检查里面的 `version` 一致才用，然后 `npm ci`；拿不到就 `npm install --no-save`
    - npm 参数固定：`--omit=dev --ignore-scripts --no-audit --no-fund`，`NODE_ENV=production`，缓存放 `runtime/npm-cache`（装完删掉），失败换另一个 registry 再试一次
@@ -81,9 +81,11 @@ SillyTavern-Easy/
 找 `…/SillyTavern/data/default-user` 这种结构，排除本安装自己：
 
 - macOS：`~/SillyTavern*/data`、`~/SillyTavern*/SillyTavern/data`，以及桌面、下载、文稿里 6 层以内
-- Windows：`%USERPROFILE%\SillyTavern*`、桌面、下载、文档、`C:\SillyTavern*`，6 层以内
+- Windows：`%USERPROFILE%\SillyTavern*`、每个本地硬盘根目录的 `X:\SillyTavern*`（往下 2 层），以及桌面、下载、文档里 6 层以内。Windows 上解压出来的文件夹名五花八门（`SillyTavern-release`、`SillyTavern-1.13.0`、`SillyTavern-Launcher\SillyTavern`），所以只认 `…\data\default-user` 结构，不要求上一层叫 `SillyTavern`；跳过 `node_modules`、`.git`、`AppData` 和链接文件夹
 
 每一项显示「N 个角色、M 段聊天」帮用户认。导入是**复制合并**（Mac 用 `ditto`，Windows 用 `robocopy /E`），导入前如果已有数据先自动备份。
+
+恢复备份：列出 `backups/` 和桌面上的 `酒馆数据备份-*` / `SillyTavern-backup-*`。Windows 版同时认 `.zip` 和 Mac 做的 `.tar.gz`，换电脑时直接拷过来就能恢复。
 
 ## 工具箱菜单（menu）
 
@@ -116,15 +118,30 @@ SillyTavern-Easy/
 - 面向完全的新手：说「黑色窗口」不说「终端」，说「聊天记录」不说「data 目录」
 - 每个错误都以「下一步怎么做」结尾
 - Mac 脚本里变量后面紧跟中文时一定写成 `${var}`：系统没设 UTF-8 时 bash 3.2 会把中文字节当成变量名的一部分（CI 不设 LANG，正好能测出来）
+- Windows 脚本也一样要写 `${var}`：PowerShell 的变量名允许 Unicode 字母，`"$ver个"` 会被当成变量 `$ver个`。另外 `"$a:$b"` 会被当成驱动器写法，也要写成 `"${a}:$b"`
 
 ## Windows 版要注意的地方
 
-- 入口：PowerShell 一行 `irm <url> | iex`，同时给一个 `双击安装酒馆.bat`（`powershell -NoProfile -ExecutionPolicy Bypass -File easy-st.ps1 install`）
-- 兼容 Windows PowerShell 5.1（Win10 自带），别用 PowerShell 7 才有的语法；先设 `[Net.ServicePointManager]::SecurityProtocol = Tls12`
-- 下载用 `curl.exe`（Win10 1803+ 自带）比 `Invoke-WebRequest` 快得多，没有就退回 `Invoke-WebRequest`（设 `$ProgressPreference = 'SilentlyContinue'`，不然慢几十倍）
-- 用户名是中文（`C:\Users\张三`）时路径要全程加引号；装到 `%LOCALAPPDATA%` 没问题
-- 桌面快捷方式用 `WScript.Shell` 建 `.lnk`，指向 `.bat`，图标可以用 `app\public\favicon.ico`
-- 判断「这一份」酒馆在运行：`Get-NetTCPConnection -State Listen -LocalPort <端口>` 拿 PID，再用 `Get-CimInstance Win32_Process` 看命令行是否包含本安装的 `app\server.js`
-- 杀毒软件 / SmartScreen 可能拦 `.bat`，README 里写清楚「更多信息 → 仍要运行」
-- 解压 Node 的 zip 用 `Expand-Archive`（或 `tar.exe`，Win10 1803+ 自带，更快）
-- 备份格式用 `.zip`（`Compress-Archive` 对大文件慢，优先 `tar.exe -a -c -f x.zip`）
+下面都是实测踩过的坑。**中文用户名 + 英文系统**（系统 ANSI 编码不是 GBK）是最容易出事的组合，测试时把 `EST_HOME` 设成带中文和空格的路径。
+
+- **入口**：一行 `curl.exe -fsSLo "$env:TEMP\easy-st.ps1" <url>; if ($?) { powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\easy-st.ps1" }`，另给一个 `双击安装酒馆.bat`（`powershell -NoProfile -ExecutionPolicy Bypass -File easy-st.ps1 install`）。不用 `irm <url> | iex`：
+  - `iex` 在用户自己的窗口里跑，脚本里一 `exit` 就把窗口关了，报错也看不到
+  - 5.1 的 `irm` 遇到没写 charset 的响应会按 ISO-8859-1 解码，中文全乱
+  - `irm` / `WebClient` 会走系统代理，代理软件关了但设置残留时直接下载失败；`curl.exe` 不读系统代理
+- **文件编码**：`easy-st.ps1` 必须是带 BOM 的 UTF-8，否则 5.1 按 ANSI 读；自更新和安装时复制前都检查 BOM + 语法。`.bat` 是 CRLF、无 BOM，`chcp 65001` 之前只能有英文
+- **PowerShell 版本**：兼容 5.1，别用 7 才有的语法；先设 `[Net.ServicePointManager]::SecurityProtocol = Tls12`。从 PowerShell 7 窗口里启动 `powershell.exe` 会继承 7 的 `PSModulePath`，5.1 就找不到 `Get-FileHash` 之类模块里的命令：启动时把 `\PowerShell\` 的路径去掉，哈希用 .NET 算
+- **下载**：用 `curl.exe`（Win10 1803+ 自带），支持的话加 `--ssl-revoke-best-effort`（有些网络查不到证书吊销列表，会让所有 https 失败）；没有 curl 才退回 `Invoke-WebRequest`（设 `$ProgressPreference = 'SilentlyContinue'`，不然慢几十倍）。并行测速直接起几个 `curl.exe` 进程
+- **系统自带的 `tar.exe` 不认 ANSI 编码以外的路径**（英文系统上 `C:\Users\张三` 会变成 `C:\Users\??`），压缩包里的中文文件名也一样。所以：
+  - 酒馆的 `.tgz` 和 Mac 备份的 `.tar.gz` 用 npm 自带的 tar 库解（`node -e "require('<node>/node_modules/npm/node_modules/tar').x(...)"`），`tar.exe` 只做后备
+  - Node 的 zip 用 .NET `ZipFile.ExtractToDirectory`
+  - 备份用 .NET `ZipArchive` 一个个文件写（文件名一律 UTF-8），不用 `tar.exe` 也不用 `Compress-Archive`（慢、不能排除文件夹）
+- **路径长度**：5.1 底下的 .NET 不认 260 字符以上的路径。Node 的 zip 解到 `runtime\x` 这种短路径再整个改名；删 `node_modules` 用我们自己的 node（`fs.rmSync`），删 node 自己时用 `rd /s /q`
+- **改名重试**：杀毒软件刚扫完的新文件夹会短暂被占用，`app.new → app` 这类改名要重试几次
+- **运行中的文件删不掉**：酒馆开着时换不了 Node 和 app，所以 install 发现已安装且正在运行就让用户先关掉
+- **桌面快捷方式**：桌面位置用 `[Environment]::GetFolderPath('Desktop')`（可能被 OneDrive 挪走）。**不用 `WScript.Shell`**：它按 ANSI 存路径，中文快捷方式名存不了，中文用户名会变成 `??`。做法是先写一个 80 字节的空 `.lnk` 文件头，再用 `Shell.Application` 的 `GetLink` 填内容（全程 Unicode）。快捷方式直接指向 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<安装目录>\easy-st.ps1" start|menu`，不经过 `.bat`：少一层 cmd，Ctrl+C 时不会再问「终止批处理操作吗(Y/N)?」。图标复制 `app\public\favicon.ico` 到安装目录，更新、退回时不会丢
+- **判断「这一份」酒馆在运行**：`Get-NetTCPConnection -State Listen` 拿端口和 PID（失败时解析 `netstat -ano`），再用 `Get-CimInstance Win32_Process` 看命令行是否包含本安装的 `app\server.js`。所以启动时要用 `app\server.js` 的完整路径
+- **选端口**：Hyper-V / WSL 会整段保留端口（常见 7900～8000），这些端口谁也监听不了但 `netstat` 里看不到，所以除了看监听列表，还要真的用 `TcpListener` 占一下试试
+- **启动**：`node … 2>&1 | ForEach-Object { 显示; 写日志 }`，先把 `[Console]::OutputEncoding` 设成 UTF-8，不然 node 输出的中文路径会乱。`$ErrorActionPreference` 保持 `Continue`，否则 5.1 遇到 stderr 就抛异常
+- **窗口一闪就没**：从快捷方式打开的窗口，脚本一结束就关。所以所有出错路径（`die` 和兜底的 `trap`）都要先「按回车键继续」
+- **杀毒软件 / SmartScreen** 可能拦 `.bat`，README 里写清楚「更多信息 → 仍要运行」
+- **输出符号**：Win10 老控制台字体没有 ✓ ▶，用 `√ × ! >>`

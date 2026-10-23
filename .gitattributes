@@ -1,0 +1,6 @@
+# Mac 脚本必须是 LF，不然 bash 会把 \r 当成命令的一部分
+*.sh       text eol=lf
+*.command  text eol=lf
+# Windows 的 .bat 必须是 CRLF，不然 cmd 找标签会出错
+*.bat      text eol=crlf
+*.ps1      text eol=crlf
