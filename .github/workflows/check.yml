@@ -11,3 +11,32 @@ jobs:
         run: brew install shellcheck && shellcheck -s bash -S warning -e SC2155 mac/easy-st.sh
       - name: Install end to end
         run: EST_HOME="$RUNNER_TEMP/est" EST_YES=1 EST_NO_START=1 EST_NO_SHORTCUTS=1 /bin/bash mac/easy-st.sh install
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Encoding and syntax (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $f = "$PWD\windows\easy-st.ps1"
+          $b = [IO.File]::ReadAllBytes($f)
+          if ($b[0] -ne 0xEF -or $b[1] -ne 0xBB -or $b[2] -ne 0xBF) { throw 'windows/easy-st.ps1 must be UTF-8 with BOM' }
+          $bat = [IO.File]::ReadAllBytes("$PWD\windows\" + [char]0x53cc + [char]0x51fb + [char]0x5b89 + [char]0x88c5 + [char]0x9152 + [char]0x9986 + '.bat')
+          if ($bat[0] -eq 0xEF) { throw 'the .bat must not have a BOM' }
+          $tokens = $null; $errors = $null
+          [void][Management.Automation.Language.Parser]::ParseFile($f, [ref]$tokens, [ref]$errors)
+          if ($errors) { $errors | ForEach-Object { "$($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+      - name: PSScriptAnalyzer
+        shell: powershell
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module PSScriptAnalyzer -Force -Scope CurrentUser }
+          Invoke-ScriptAnalyzer -Path windows/easy-st.ps1 -Severity Error -EnableExit
+      - name: Install end to end (path with spaces and Chinese)
+        shell: powershell
+        run: |
+          $env:EST_HOME = Join-Path $env:RUNNER_TEMP ('est ' + [char]0x9152 + [char]0x9986)
+          $env:EST_YES = '1'; $env:EST_NO_START = '1'; $env:EST_NO_SHORTCUTS = '1'
+          powershell -NoProfile -ExecutionPolicy Bypass -File windows\easy-st.ps1 install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath "$env:EST_HOME\app\server.js")) { throw 'SillyTavern was not installed' }
