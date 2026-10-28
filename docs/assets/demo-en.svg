@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="560" viewBox="0 0 860 560">
+  <defs>
+    <style>
+      text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", "Microsoft YaHei", monospace; font-size: 15px; fill: #d8d4cf; white-space: pre; }
+      .b { fill: #6cb6ff; font-weight: 700; }
+      .g { fill: #6fd38a; }
+      .d { fill: #8b949e; }
+      .t { fill: #f0b060; font-weight: 700; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; font-size: 13px; fill: #9aa0a6; }
+    </style>
+  </defs>
+  <rect width="860" height="560" rx="12" fill="#161b22"/>
+  <rect width="860" height="36" rx="12" fill="#21262d"/>
+  <rect y="24" width="860" height="12" fill="#21262d"/>
+  <circle cx="22" cy="18" r="6.5" fill="#ff5f57"/>
+  <circle cx="44" cy="18" r="6.5" fill="#febc2e"/>
+  <circle cx="66" cy="18" r="6.5" fill="#28c840"/>
+  <text x="430" y="23" text-anchor="middle" class="title">Installing SillyTavern</text>
+
+  <text x="24" y="66" class="d">  ================================================</text>
+  <text x="24" y="88" class="t">        SillyTavern one-click installer</text>
+  <text x="24" y="110">        No admin password needed, about 2-5 minutes</text>
+  <text x="24" y="132" class="d">  ================================================</text>
+
+  <text x="24" y="166" class="b">▶ Checking this Mac</text>
+  <text x="24" y="188">    macOS 15.6 · Apple silicon</text>
+  <text x="24" y="210" class="g">    ✓ Ready to install</text>
+
+  <text x="24" y="244" class="b">▶ Checking the network and picking the fastest mirrors</text>
+  <text x="24" y="266" class="g">    ✓ Using official sources</text>
+
+  <text x="24" y="300" class="b">▶ Setting up Node.js</text>
+  <text x="24" y="322" class="g">    ✓ Node.js v24.22.1 installed</text>
+
+  <text x="24" y="356" class="b">▶ Downloading SillyTavern</text>
+  <text x="24" y="378" class="b">▶ Installing dependencies (1-3 minutes)</text>
+  <text x="24" y="400" class="g">    ✓ SillyTavern 1.19.0 installed</text>
+  <text x="24" y="422" class="g">    ✓ Shortcuts created on the Desktop</text>
+
+  <text x="24" y="460" class="g">  ================================================</text>
+  <text x="24" y="482" class="g">    Done! Double-click "SillyTavern" on your Desktop to start it.</text>
+  <text x="24" y="504" class="g">  ================================================</text>
+  <text x="24" y="534">  Start SillyTavern now? [Y/n] <tspan fill="#d8d4cf">▍</tspan></text>
+</svg>
