@@ -15,11 +15,13 @@ $work = Join-Path $env:TEMP ('est-' + [guid]::NewGuid().ToString('N').Substring(
 $env:USERPROFILE = "$work\home"
 $env:EST_HOME = "$work\home\酒馆 测试"
 $env:EST_DESKTOP = "$work\home\Desktop"
+$env:EST_PROGRAMS = "$work\home\Programs"
 $env:EST_LANG = 'zh'
 $env:EST_YES = '1'
 $env:EST_NO_START = '1'
 $env:EST_NO_BROWSER = '1'
 [void][IO.Directory]::CreateDirectory($env:EST_DESKTOP)
+[void][IO.Directory]::CreateDirectory($env:EST_PROGRAMS)
 
 $script:fails = 0
 function pass([string]$what) { Write-Host "ok    $what" }
@@ -59,7 +61,7 @@ try {
     check '酒馆日志级别不是 DEBUG' ([IO.File]::ReadAllText($config) -match '(?m)^  minLogLevel: 1')
     check '桌面快捷方式' (Test-Path -LiteralPath "$env:EST_DESKTOP\酒馆 SillyTavern.lnk")
     check '安装文件夹里也有一份' (Test-Path -LiteralPath "$env:EST_HOME\酒馆工具箱.lnk")
-    $programs = [Environment]::GetFolderPath('Programs')
+    $programs = $env:EST_PROGRAMS
     check '开始菜单快捷方式' (Test-Path -LiteralPath "$programs\酒馆 SillyTavern.lnk")
 
     # -------------------------------------------------------- 启动 ---
@@ -83,7 +85,7 @@ try {
         fail '启动后网页打得开'
         exit 1
     }
-    pass "启动后网页打得开（端口 $port）"
+    pass "启动后网页打得开（端口 ${port}）"
     # 没认出来的话会再开一份，一直不退出
     check '重复启动不会开第二份' ((run 'again' @('start') 60) -eq 0)
     check '旧版 DEBUG 配置被改掉' ([IO.File]::ReadAllText($config) -match '(?m)^  minLogLevel: 1')
@@ -168,7 +170,7 @@ require('http').createServer((q, r) => {
 
 Write-Host ''
 if ($script:fails -gt 0) {
-    foreach ($log in @(Get-ChildItem -LiteralPath $work -Include '*.log', '*.err' -Recurse -File -ErrorAction SilentlyContinue)) {
+    foreach ($log in @(Get-ChildItem -LiteralPath $work -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.log', '.err' })) {
         Write-Host "--- $($log.Name)"
         Get-Content -LiteralPath $log.FullName -Encoding UTF8 -Tail 15
     }

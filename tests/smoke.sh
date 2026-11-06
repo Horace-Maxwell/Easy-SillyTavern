@@ -83,7 +83,7 @@ for _ in $(seq 1 120); do
     sleep 1
 done
 if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/" 2>/dev/null)" = 200 ]; then
-    pass "启动后网页打得开（端口 $port）"
+    pass "启动后网页打得开（端口 ${port}）"
 else
     tail -n 30 "$work/start.log"
     fail "启动后网页打得开"

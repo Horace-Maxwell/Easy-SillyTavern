@@ -17,6 +17,10 @@ jobs:
           done
       - name: Windows install command has no dollar sign (it must work in Command Prompt too)
         run: "! grep -E '^powershell -NoProfile' README.md | grep -F '$'"
+      - name: No variable directly followed by non-ASCII (bash 3.2 reads the bytes as part of the name)
+        env:
+          LC_ALL: C.UTF-8
+        run: "! grep -nP '(?<![\\\\{])\\$[A-Za-z_][A-Za-z0-9_]*[^\\x00-\\x7F]' mac/easy-st.sh tests/smoke.sh windows/easy-st.ps1 tests/smoke.ps1"
 
   mac:
     runs-on: macos-latest
@@ -87,16 +91,20 @@ jobs:
           set "EST_HOME=%RUNNER_TEMP%\readme-cmd"
           call "%RUNNER_TEMP%\readme.bat"
           if not exist "%EST_HOME%\app\server.js" exit /b 1
-      - name: The install command from the README, in PowerShell
+      - name: The install command from the README, in PowerShell, with real Start menu shortcuts
         shell: powershell
         env:
           EST_YES: '1'
           EST_NO_START: '1'
-          EST_NO_SHORTCUTS: '1'
         run: |
           $env:EST_HOME = "$env:RUNNER_TEMP\readme-ps"
+          $env:EST_DESKTOP = "$env:RUNNER_TEMP\readme-desktop"
+          [void][IO.Directory]::CreateDirectory($env:EST_DESKTOP)
           Invoke-Expression (Get-Content -Raw "$env:RUNNER_TEMP\readme.bat")
           if (-not (Test-Path -LiteralPath "$env:EST_HOME\app\server.js")) { throw 'SillyTavern was not installed' }
+          $programs = [Environment]::GetFolderPath('Programs')
+          if (-not (Test-Path -LiteralPath "$programs\SillyTavern.lnk")) { throw "no shortcut in the Start menu ($programs)" }
+          if (-not (Test-Path -LiteralPath "$env:EST_DESKTOP\SillyTavern.lnk")) { throw 'no shortcut on the Desktop' }
       - name: End to end
         shell: powershell
         run: |

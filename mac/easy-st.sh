@@ -249,7 +249,7 @@ detect_linux() {
         UNSUPPORTED="$(t "这个系统不是 glibc 的（比如 Alpine），官方 Node.js 跑不了。请换 Ubuntu、Debian、Fedora 这类系统。" \
             "This system does not use glibc (Alpine, for example), so the official Node.js cannot run.")"
     elif ! awk -v v="$glibc" 'BEGIN { split(v, a, "."); exit !(a[1] > 2 || (a[1] == 2 && a[2] >= 28)) }'; then
-        UNSUPPORTED="$(t "这个系统太旧了（glibc $glibc），Node.js 最低需要 glibc 2.28，比如 Ubuntu 20.04、Debian 10。" \
+        UNSUPPORTED="$(t "这个系统太旧了（glibc ${glibc}），Node.js 最低需要 glibc 2.28，比如 Ubuntu 20.04、Debian 10。" \
             "glibc $glibc is too old; Node.js needs 2.28 or newer (Ubuntu 20.04, Debian 10).")"
     fi
     command -v curl >/dev/null 2>&1 || UNSUPPORTED="$(t "还没有 curl。先在终端里运行 sudo apt install curl（Fedora 用 dnf，Arch 用 pacman），再重新安装。" \

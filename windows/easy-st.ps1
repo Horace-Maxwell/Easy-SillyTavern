@@ -45,6 +45,8 @@ $EST_ISSUES = "https://github.com/$EST_REPO/issues"
 $EST_HOME = [IO.Path]::GetFullPath((env_or 'EST_HOME' (Join-Path $env:LOCALAPPDATA 'SillyTavern-Easy'))).TrimEnd('\')
 # 桌面可能被 OneDrive 挪走了，要问系统真正的位置
 $EST_DESKTOP = env_or 'EST_DESKTOP' ([Environment]::GetFolderPath('Desktop'))
+# 开始菜单。测试时指到临时文件夹，免得动到这台电脑真的开始菜单
+$EST_PROGRAMS = env_or 'EST_PROGRAMS' ([Environment]::GetFolderPath('Programs'))
 $NODE_DIR = "$EST_HOME\runtime\node"
 $APP_DIR = "$EST_HOME\app"
 $DATA_DIR = "$EST_HOME\data"
@@ -653,7 +655,7 @@ if (!best) process.exit(1);
 console.log(best.version, best.dist.tarball, best.dist.integrity);
 '@
 
-# 返回 @{ Version; Url; Sri }，查不到返回 $null。先看 latest，不合适再翻全部版本
+# 返回 @{ Version; Url; Sri }。先看 latest，不合适再翻全部版本；都查不到返回 $null
 function st_latest_meta {
     $tmp = new_tmp
     try {
@@ -991,7 +993,7 @@ function make_shortcuts {
     $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
     $made = @()
     $onDesktop = $false
-    foreach ($dir in @($EST_DESKTOP, [Environment]::GetFolderPath('Programs'), $EST_HOME)) {
+    foreach ($dir in @($EST_DESKTOP, $EST_PROGRAMS, $EST_HOME)) {
         if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { continue }
         $start = "$dir\$startName.lnk"
         $tools = "$dir\$toolsName.lnk"

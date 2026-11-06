@@ -148,6 +148,10 @@ SillyTavern-Easy/
 
 `tests/smoke.sh`（Mac、Linux、Termux）和 `tests/smoke.ps1`（Windows）把真实安装走一遍：安装、启动、重复启动、发一句真的聊天给假的 AI 接口并确认它进不了记录和报告、备份恢复、接着装、更新、卸载。安装目录带中文和空格。`EST_ANSWERS="y 1"` 让脚本依次代答问题，只给测试用。
 
+CI 的环境没设 `LANG`，上面「文案」一节说的变量名问题在这里才测得出来，本机测要用 `env -i HOME="$HOME" PATH="$PATH" /bin/bash tests/smoke.sh`。CI 还会直接检查脚本里有没有变量后面紧跟非 ASCII 字符。
+
+`EST_DESKTOP`、`EST_PROGRAMS` 让 Windows 的测试不碰真的桌面和开始菜单；真的开始菜单由 CI 里跑 README 命令的那一步检查。
+
 本机有 Docker 的话，Linux 和 Termux 也能本地测：
 
 ```bash
