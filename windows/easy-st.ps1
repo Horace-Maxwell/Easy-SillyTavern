@@ -30,7 +30,7 @@ if ($PSVersionTable.PSEdition -ne 'Core') {
 # 不关掉进度条的话 Invoke-WebRequest、Expand-Archive 会慢几十倍
 $ProgressPreference = 'SilentlyContinue'
 
-$EST_VERSION = '0.1.0'
+$EST_VERSION = '0.2.0'
 
 function env_or([string]$name, [string]$default) {
     $v = [Environment]::GetEnvironmentVariable($name)
@@ -39,6 +39,7 @@ function env_or([string]$name, [string]$default) {
 
 $EST_REPO = env_or 'EST_REPO' 'Horace-Maxwell/Easy-SillyTavern'
 $EST_BRANCH = env_or 'EST_BRANCH' 'main'
+$EST_ISSUES = "https://github.com/$EST_REPO/issues"
 
 # 不放「文档」「桌面」：那两个经常被 OneDrive 同步，node_modules 几万个小文件会把同步卡死
 $EST_HOME = [IO.Path]::GetFullPath((env_or 'EST_HOME' (Join-Path $env:LOCALAPPDATA 'SillyTavern-Easy'))).TrimEnd('\')
@@ -118,22 +119,47 @@ function ok([string]$zh, [string]$en = '') { Write-Host "  √ $(t $zh $en)" -Fo
 function warn([string]$zh, [string]$en = '') { Write-Host "  ! $(t $zh $en)" -ForegroundColor Yellow }
 function err([string]$zh, [string]$en = '') { Write-Host "  × $(t $zh $en)" -ForegroundColor Red }
 
+# EST_ANSWERS="1 y" 是给自动测试用的：依次代答，不用真的敲键盘
+function has_answers { [bool]$env:EST_ANSWERS }
+
+function read_reply {
+    if (has_answers) {
+        $parts = $env:EST_ANSWERS.Split(' ', 2)
+        if ($parts.Count -gt 1) { $env:EST_ANSWERS = $parts[1] } else { $env:EST_ANSWERS = '' }
+        Write-Host $parts[0]
+        return $parts[0]
+    }
+    $s = [Console]::ReadLine()
+    if ($null -eq $s) { '' } else { $s.Trim() }
+}
+
 function is_interactive {
+    if (has_answers) { return $true }
     if ($env:EST_YES -eq '1') { return $false }
     try { -not [Console]::IsInputRedirected } catch { $true }
 }
 
 function pause {
-    if (-not (is_interactive)) { return }
+    if ((has_answers) -or -not (is_interactive)) { return }
     Write-Host ''
     Write-Host "  $(t '按回车键继续……' 'Press Enter to continue...')" -NoNewline
     [void][Console]::ReadLine()
 }
 
+# 第一次安装失败时工具箱还不存在，不能叫用户去开它
+function help_lines {
+    Write-Host ''
+    if (setup_done) {
+        Write-Host "  $(t '可以打开「酒馆工具箱」选「诊断」，把生成的报告发给帮你的人。' 'Open the toolbox, choose Diagnose, and send the report to whoever helps you.')"
+    } else {
+        Write-Host "  $(t '可以再运行一次安装命令，已经装好的部分会跳过。' 'You can run the install command again; finished steps are skipped.')"
+        Write-Host "  $(t '还不行的话，把这个窗口截图发给帮你的人，或者发到：' 'If it still fails, send a screenshot of this window to whoever helps you, or post it at:') $EST_ISSUES"
+    }
+}
+
 function die([string]$zh, [string]$en = '') {
     err $zh $en
-    Write-Host ''
-    Write-Host "  $(t '可以双击桌面上的「酒馆工具箱」选「诊断」，把生成的报告发给帮你的人。' 'Run "Diagnose" from the toolbox and send the report to whoever helps you.')"
+    help_lines
     pause
     exit 1
 }
@@ -143,9 +169,7 @@ function ask([string]$zh, [string]$en, [string]$def = 'y') {
     if (-not (is_interactive)) { return ($def -eq 'y') }
     if ($def -eq 'y') { $hint = '[Y/n]' } else { $hint = '[y/N]' }
     Write-Host "  $(t $zh $en) $hint " -NoNewline
-    $reply = [Console]::ReadLine()
-    if ($null -eq $reply) { $reply = '' }
-    $reply = $reply.Trim()
+    $reply = read_reply
     if ($reply -match '^(y|是|好|要)') { return $true }
     if ($reply -match '^(n|否|不)') { return $false }
     return ($def -eq 'y')
@@ -154,7 +178,7 @@ function ask([string]$zh, [string]$en, [string]$def = 'y') {
 # 读一个编号；不是数字就返回 0
 function read_number([string]$zh, [string]$en) {
     Write-Host "  $(t $zh $en) " -NoNewline
-    $s = [Console]::ReadLine()
+    $s = read_reply
     $n = 0
     if ($s -and [int]::TryParse($s.Trim(), [ref]$n)) { $n } else { 0 }
 }
@@ -235,7 +259,10 @@ function state_set([string]$key, [string]$value) {
     [IO.File]::WriteAllLines($STATE, [string[]]$lines, $UTF8)
 }
 
-function is_installed { (Test-Path -LiteralPath $NODE) -and (Test-Path -LiteralPath "$APP_DIR\server.js") }
+function is_installed { (Test-Path -LiteralPath $NODE) -and (Test-Path -LiteralPath "$APP_DIR\server.js") -and (Test-Path -LiteralPath $CONFIG) }
+
+# 安装走完了最后一步。v0.1.0 不记 SETUP，看它写过的 SHORTCUTS
+function setup_done { (is_installed) -and (((state_get 'SETUP') -eq 'done') -or [bool](state_get 'SHORTCUTS')) }
 
 function st_version([string]$dir = $APP_DIR) {
     try { [string]([IO.File]::ReadAllText("$dir\package.json") | ConvertFrom-Json).version } catch { '' }
@@ -355,6 +382,9 @@ function detect_proxy {
     $script:PROXY_SRC = 'system'
 }
 
+# 代理地址里可能带账号密码，屏幕和诊断报告上都不显示
+function safe_url([string]$u) { $u -replace '//[^/@]*@', '//***@' }
+
 function apply_proxy {
     if ($PROXY_URL -and $PROXY_SRC -eq 'system') {
         $env:HTTP_PROXY = $PROXY_URL
@@ -428,7 +458,8 @@ function choose_sources {
     step '检测网络，挑最快的下载源' 'Checking the network and picking the fastest mirrors'
     detect_proxy
     if ($PROXY_URL) {
-        ok "发现代理 ${PROXY_URL}，下载会走代理" "Using proxy $PROXY_URL"
+        $shown = safe_url $PROXY_URL
+        ok "发现代理 ${shown}，下载会走代理" "Using proxy $shown"
     } elseif ($PROXY_DEAD) {
         warn "系统代理设置成了 ${PROXY_DEAD}，但它没在运行，先不走代理" "System proxy $PROXY_DEAD is set but not running; ignoring it"
     }
@@ -607,18 +638,35 @@ function npm_env {
     if (-not $env:Path.StartsWith("$NODE_DIR;")) { $env:Path = "$NODE_DIR;$env:Path" }
 }
 
-# 返回 @{ Version; Url; Sri }，查不到返回 $null
+# 从 npm 的回应里挑最新的、这台电脑的 Node.js 跑得动的正式版。
+# 旧系统只能用旧 Node.js，酒馆哪天提高了要求，这些电脑要留在还能跑的版本上，不能装坏。
+# JS 放在文件里跑：5.1 给外部程序传带双引号的参数会出错
+$ST_PICK = @'
+const j = JSON.parse(require('fs').readFileSync(process.argv[2], 'utf8'));
+const have = +process.versions.node.split('.')[0];
+const need = v => +(((v.engines && v.engines.node) || '').match(/\d+/) || [0])[0];
+const num = v => v.version.split('.').map(Number);
+const best = (j.versions ? Object.values(j.versions) : [j])
+    .filter(v => !v.version.includes('-') && need(v) <= have)
+    .sort((a, b) => num(b)[0] - num(a)[0] || num(b)[1] - num(a)[1] || num(b)[2] - num(a)[2])[0];
+if (!best) process.exit(1);
+console.log(best.version, best.dist.tarball, best.dist.integrity);
+'@
+
+# 返回 @{ Version; Url; Sri }，查不到返回 $null。先看 latest，不合适再翻全部版本
 function st_latest_meta {
     $tmp = new_tmp
     try {
+        [IO.File]::WriteAllText("$tmp\pick.js", $ST_PICK, $UTF8)
         foreach ($reg in @($NPM_REGISTRY, $NPM_FALLBACK)) {
-            if (fetch "$tmp\latest.json" @("$reg/sillytavern/latest") -Quiet) {
-                try {
-                    $j = [IO.File]::ReadAllText("$tmp\latest.json") | ConvertFrom-Json
-                    if ($j.version -and $j.dist.tarball -and $j.dist.integrity) {
-                        return @{ Version = [string]$j.version; Url = [string]$j.dist.tarball; Sri = [string]$j.dist.integrity }
+            foreach ($doc in @('sillytavern/latest', 'sillytavern')) {
+                if (fetch "$tmp\meta.json" @("$reg/$doc") -Quiet) {
+                    $line = & $NODE "$tmp\pick.js" "$tmp\meta.json" 2>$null
+                    if ($LASTEXITCODE -eq 0 -and $line) {
+                        $f = ([string]$line).Trim() -split ' '
+                        if ($f.Count -eq 3) { return @{ Version = $f[0]; Url = $f[1]; Sri = $f[2] } }
                     }
-                } catch {}
+                }
             }
         }
         $null
@@ -739,6 +787,17 @@ function install_st([string]$mode = '') {
 
 # ------------------------------------------------------------- 配置 ---
 
+# 酒馆默认的 DEBUG 级别会把发给 AI 的完整聊天内容写进运行记录，而诊断报告带着运行记录的末尾。
+# 改成 INFO。v0.1.0 留下的旧记录里可能有聊天内容，趁改配置时一起删掉。
+# 启动时也要跑：旧工具箱自更新后，那一次更新走的还是旧代码
+function quiet_logs {
+    if (-not (Test-Path -LiteralPath $CONFIG)) { return }
+    $text = [IO.File]::ReadAllText($CONFIG)
+    if ($text -notmatch '(?m)^  minLogLevel: 0') { return }
+    [IO.File]::WriteAllText($CONFIG, ($text -replace '(?m)^  minLogLevel: 0', '  minLogLevel: 1'), $UTF8)
+    Remove-Item -Path "$LOG_DIR\st-*.log" -Force -ErrorAction SilentlyContinue
+}
+
 function write_config {
     ensure_dir $DATA_DIR
     ensure_dir $LOG_DIR
@@ -751,6 +810,7 @@ function write_config {
         ok '已生成配置文件' 'Config created'
     }
     if (-not (Test-Path -LiteralPath $MARKER)) { [IO.File]::WriteAllText($MARKER, '') }
+    quiet_logs
 }
 
 function seed_tokenizers {
@@ -919,27 +979,37 @@ function new_shortcut([string]$path, [string]$target, [string]$arguments, [strin
 
 # 桌面快捷方式直接指向 powershell.exe，不经过 .bat：
 # 少一层 cmd，按 Ctrl+C 时不会再问「终止批处理操作吗(Y/N)?」，杀毒软件也不爱拦
+# 放三个地方：桌面、开始菜单、安装文件夹。桌面上的被删了或者放不了，还能从开始菜单打开
 function make_shortcuts {
     if ($env:EST_NO_SHORTCUTS -eq '1') { return }
-    if (-not $EST_DESKTOP -or -not (Test-Path -LiteralPath $EST_DESKTOP)) { return }
     $icon = "$EST_HOME\sillytavern.ico"
     if (Test-Path -LiteralPath "$APP_DIR\public\favicon.ico") {
         Copy-Item -LiteralPath "$APP_DIR\public\favicon.ico" -Destination $icon -Force
     }
     $startName = t '酒馆 SillyTavern' 'SillyTavern'
     $toolsName = t '酒馆工具箱' 'SillyTavern Toolbox'
-    $start = "$EST_DESKTOP\$startName.lnk"
-    $tools = "$EST_DESKTOP\$toolsName.lnk"
     $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    try {
-        new_shortcut $start $ps "-NoProfile -ExecutionPolicy Bypass -File `"$SELF`" start" $EST_HOME $icon (t '启动酒馆' 'Start SillyTavern')
-        new_shortcut $tools $ps "-NoProfile -ExecutionPolicy Bypass -File `"$SELF`" menu" $EST_HOME $icon (t '更新、备份、诊断、卸载' 'Update, back up, diagnose, uninstall')
-    } catch {
-        warn '桌面快捷方式没建好，可以在工具箱里重新「检查更新」试试。' 'Could not create the Desktop shortcuts.'
-        return
+    $made = @()
+    $onDesktop = $false
+    foreach ($dir in @($EST_DESKTOP, [Environment]::GetFolderPath('Programs'), $EST_HOME)) {
+        if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { continue }
+        $start = "$dir\$startName.lnk"
+        $tools = "$dir\$toolsName.lnk"
+        try {
+            new_shortcut $start $ps "-NoProfile -ExecutionPolicy Bypass -File `"$SELF`" start" $EST_HOME $icon (t '启动酒馆' 'Start SillyTavern')
+            new_shortcut $tools $ps "-NoProfile -ExecutionPolicy Bypass -File `"$SELF`" menu" $EST_HOME $icon (t '更新、备份、诊断、卸载' 'Update, back up, diagnose, uninstall')
+        } catch {
+            continue
+        }
+        $made += $start, $tools
+        if ($dir -eq $EST_DESKTOP) { $onDesktop = $true }
     }
-    state_set 'SHORTCUTS' "$start|$tools"
-    ok "桌面上放好了「${startName}」和「${toolsName}」" 'Shortcuts created on the Desktop'
+    state_set 'SHORTCUTS' ($made -join '|')
+    if ($onDesktop) {
+        ok "桌面上放好了「${startName}」和「${toolsName}」" 'Shortcuts created on the Desktop'
+    } else {
+        warn "没能在桌面放图标。以后点开始菜单，搜索「${startName}」就能打开。" "Could not add Desktop shortcuts. Search for $startName in the Start menu."
+    }
 }
 
 # ------------------------------------------------------------- 启动 ---
@@ -1013,6 +1083,7 @@ function cmd_start {
         die "端口 ${PORT_FIRST}～$PORT_LAST 都被占用了，重启电脑后再试。" "Ports $PORT_FIRST-$PORT_LAST are all busy. Restart your PC and try again."
     }
     if ($port -ne [string]$PORT_FIRST) { warn "$PORT_FIRST 端口被别的程序占了，这次用 $port" "Port $PORT_FIRST is busy, using $port" }
+    quiet_logs
 
     $extra = @()
     detect_proxy
@@ -1034,7 +1105,10 @@ function cmd_start {
     Write-Host (t '   · 用的时候【不要关掉】这个窗口' '   · Keep this window open while you use it')
     Write-Host (t '   · 用完直接关掉这个窗口就行' '   · Close this window when you are done')
     Write-Host (t "   · 浏览器没打开的话，手动访问 http://127.0.0.1:$port" "   · If the browser does not open: http://127.0.0.1:$port")
-    if ($PROXY_URL) { Write-Host (t "   · 已自动使用代理 $PROXY_URL" "   · Using proxy $PROXY_URL") }
+    if ($PROXY_URL) {
+        $shown = safe_url $PROXY_URL
+        Write-Host (t "   · 已自动使用代理 $shown" "   · Using proxy $shown")
+    }
     Write-Host '  ================================================'
     Write-Host (t '   （下面滚动的英文是运行记录，不用管）' '   (The log below is for troubleshooting.)')
     Write-Host ''
@@ -1123,6 +1197,7 @@ function cmd_backup {
     $f = do_backup 'manual'
     if (-not $f) { die '备份失败。' 'Backup failed.' }
     ok "备份好了：${f}（$(size_text $f)）" "Backup saved: $f ($(size_text $f))"
+    warn '备份里有你的聊天记录和 API 密钥，只拷给自己，别发给别人。' 'This backup contains your chats and API keys. Keep it to yourself.'
     Start-Process explorer.exe -ArgumentList "/select,`"$f`""
 }
 
@@ -1173,8 +1248,9 @@ function self_update {
     $tmp = new_tmp
     if (fetch "$tmp\easy-st.ps1" (gh_urls $EST_REPO $EST_BRANCH 'windows/easy-st.ps1') -Quiet) {
         $newVer = script_version "$tmp\easy-st.ps1"
+        # 只往新版本走：jsDelivr 发版后几个小时内还可能给旧文件。
         # 先检查能不能解析，下坏了或者被网页替换了都不会覆盖
-        if ($newVer -and $newVer -ne $EST_VERSION -and (script_ok "$tmp\easy-st.ps1")) {
+        if ($newVer -and ([version]$newVer -gt [version]$EST_VERSION) -and (script_ok "$tmp\easy-st.ps1")) {
             Copy-Item -LiteralPath "$tmp\easy-st.ps1" -Destination $SELF -Force
             ok "工具箱已更新到 $newVer" "Toolbox updated to $newVer"
         }
@@ -1196,6 +1272,7 @@ function cmd_update {
     write_config
     seed_tokenizers
     make_shortcuts
+    state_set 'SETUP' 'done'
     remove_dir $TMP_ROOT
     ok '更新完成' 'Update finished'
 }
@@ -1220,12 +1297,6 @@ function cmd_rollback {
 
 function cmd_doctor {
     detect_system
-    if ($EST_DESKTOP -and (Test-Path -LiteralPath $EST_DESKTOP)) {
-        $report = "$EST_DESKTOP\$(t '酒馆诊断报告' 'SillyTavern-diagnostics')-$(stamp).txt"
-    } else {
-        ensure_dir $EST_HOME
-        $report = "$EST_HOME\diagnostics.txt"
-    }
     step '正在检查……' 'Checking...'
     $out = New-Object 'Collections.Generic.List[string]'
     $out.Add("Easy SillyTavern $EST_VERSION diagnostics  $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
@@ -1243,7 +1314,7 @@ function cmd_doctor {
     if (Test-Path -LiteralPath $STATE) { $st = [IO.File]::ReadAllLines($STATE) -join ' ' }
     $out.Add("state: $(tilde $st)")
     detect_proxy
-    $out.Add("proxy=$(if ($PROXY_URL) { $PROXY_URL } else { 'none' }) src=$PROXY_SRC dead=$PROXY_DEAD")
+    $out.Add("proxy=$(if ($PROXY_URL) { safe_url $PROXY_URL } else { 'none' }) src=$PROXY_SRC dead=$(safe_url $PROXY_DEAD)")
     $rp = st_running_port
     if (-not $rp) { $rp = 'none' }
     $out.Add("running_port=$rp")
@@ -1280,8 +1351,19 @@ function cmd_doctor {
     if ($last) {
         foreach ($line in @(Get-Content -LiteralPath $last.FullName -Tail 80 -Encoding UTF8)) { $out.Add((tilde $line)) }
     }
+    # 桌面可能写不进去（比如 Defender 的「受控制文件夹访问」），写不进去就换地方。
     # 带 BOM，老版本的记事本才认得出是 UTF-8
-    [IO.File]::WriteAllLines($report, [string[]]$out, $UTF8BOM)
+    $name = "$(t '酒馆诊断报告' 'SillyTavern-diagnostics')-$(stamp).txt"
+    $report = ''
+    foreach ($dir in @($EST_DESKTOP, $EST_HOME, $env:USERPROFILE)) {
+        if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { continue }
+        try {
+            [IO.File]::WriteAllLines("$dir\$name", [string[]]$out, $UTF8BOM)
+            $report = "$dir\$name"
+            break
+        } catch {}
+    }
+    if (-not $report) { die '找不到能写报告的文件夹。' 'No writable folder for the report.' }
     ok "报告在：$report" "Report saved: $report"
     info '报告里没有你的 API 密钥和聊天内容，可以放心发给别人。' 'The report contains no API keys or chats.'
     Start-Process notepad.exe -ArgumentList "`"$report`""
@@ -1407,6 +1489,7 @@ function cmd_install {
     seed_tokenizers
     if (-not (Test-Path -LiteralPath "$DATA_DIR\default-user")) { offer_import }
     make_shortcuts
+    state_set 'SETUP' 'done'
     remove_dir $TMP_ROOT
 
     Write-Host ''
@@ -1429,15 +1512,15 @@ function usage {
 trap {
     err "出了意外的错误：$($_.Exception.Message)" "Unexpected error: $($_.Exception.Message)"
     Write-Host "  $($_.InvocationInfo.PositionMessage)" -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host "  $(t '可以双击桌面上的「酒馆工具箱」选「诊断」，把生成的报告和这个窗口的截图发给帮你的人。' 'Run "Diagnose" from the toolbox and send the report and a screenshot of this window to whoever helps you.')"
+    help_lines
     pause
     exit 1
 }
 
 $cmd = $Command
 if (-not $cmd) {
-    if ((is_installed) -and (Test-Path -LiteralPath $SELF)) { $cmd = 'menu' } else { $cmd = 'install' }
+    # 装到一半被打断的，再运行一次要接着装，不能直接进工具箱（桌面图标还没放呢）
+    if ((setup_done) -and (Test-Path -LiteralPath $SELF)) { $cmd = 'menu' } else { $cmd = 'install' }
 }
 switch ($cmd) {
     'install' { cmd_install }

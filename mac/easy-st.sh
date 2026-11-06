@@ -1,28 +1,58 @@
 #!/bin/bash
 #
-# Easy SillyTavern · macOS
+# Easy SillyTavern · macOS / Linux / Android (Termux)
 # 酒馆 SillyTavern 一键安装 / 启动 / 更新 / 备份 / 诊断
 #
 #   安装：bash -c "$(curl -fsSL <本文件的地址>)"
 #   之后：双击桌面上的「酒馆 SillyTavern」启动，「酒馆工具箱」做更新、备份、诊断。
+#         Linux 在应用菜单里找；手机上打开 Termux 输入 tavern、tavern-tools。
+#
+# 文件放在 mac/ 下是历史原因：装好的工具箱都从这个路径自更新，别搬走。
 #
 # 不需要 Homebrew、Xcode、管理员密码。所有东西都装在 ~/SillyTavern-Easy 里：
-#   runtime/node   私有的 Node.js（按 Mac 芯片和系统版本自动选）
+#   runtime/node   私有的 Node.js（按芯片和系统版本自动选；Termux 用 pkg 装的）
 #   app/           SillyTavern 程序本体（更新时整个替换）
 #   data/          聊天记录、角色卡、设置（更新时不动）
 #   config.yaml    酒馆配置
 #
-# 只用 macOS 自带的 bash 3.2、curl、tar、shasum，别加 bash 4 以后才有的写法。
+# macOS 上只用系统自带的 bash 3.2、curl、tar、shasum，别加 bash 4 以后才有的写法。
 
 set -u
 
-EST_VERSION="0.1.0"
+EST_VERSION="0.2.0"
 EST_REPO="${EST_REPO:-Horace-Maxwell/Easy-SillyTavern}"
 EST_BRANCH="${EST_BRANCH:-main}"
 
+EST_ISSUES="https://github.com/$EST_REPO/issues"
+
+if [ "$(uname -s)" = Darwin ]; then
+    PLATFORM=mac
+elif [ "$(uname -o 2>/dev/null)" = Android ]; then
+    PLATFORM=termux
+else
+    PLATFORM=linux
+fi
+
+# 写进快捷方式和用来查语法的 bash。Termux 上没有 /bin/bash
+BASH_BIN=/bin/bash
+[ -x "$BASH_BIN" ] || BASH_BIN="$BASH"
+
+# 放快捷方式、诊断报告、卸载前备份的地方
+default_desktop() {
+    case "$PLATFORM" in
+        mac) printf '%s' "$HOME/Desktop" ;;
+        # 中文系统上桌面是 ~/桌面，要问系统
+        linux) xdg-user-dir DESKTOP 2>/dev/null || printf '%s' "$HOME/Desktop" ;;
+        # 手机上没有桌面。开了存储权限就放「下载」，用户在文件管理器里看得到
+        termux) if [ -d "$HOME/storage/downloads" ]; then printf '%s' "$HOME/storage/downloads"; else printf '%s' "$HOME"; fi ;;
+    esac
+}
+
 EST_HOME="${EST_HOME:-$HOME/SillyTavern-Easy}"
-EST_DESKTOP="${EST_DESKTOP:-$HOME/Desktop}"
+EST_DESKTOP="${EST_DESKTOP:-$(default_desktop)}"
 NODE_DIR="$EST_HOME/runtime/node"
+# Termux 用 pkg 装的 Node.js，官方编译的跑不了（安卓的 C 库不一样）
+[ "$PLATFORM" = termux ] && NODE_DIR="${PREFIX:-/data/data/com.termux/files/usr}"
 NOGIT_DIR="$EST_HOME/runtime/nogit"
 APP_DIR="$EST_HOME/app"
 DATA_DIR="$EST_HOME/data"
@@ -32,6 +62,7 @@ BACKUP_DIR="$EST_HOME/backups"
 STATE="$EST_HOME/state.env"
 SELF="$EST_HOME/easy-st.sh"
 MARKER="$EST_HOME/.easy-sillytavern"
+RUN_INFO="$EST_HOME/run.info"
 NODE="$NODE_DIR/bin/node"
 NPM="$NODE_DIR/bin/npm"
 
@@ -44,7 +75,20 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
 # ---------------------------------------------------------------- 输出 ---
 
-case "${EST_LANG:-$(defaults read -g AppleLocale 2>/dev/null || echo "${LANG:-}")}" in
+detect_lang() {
+    local v="${EST_LANG:-}"
+    if [ -z "$v" ]; then
+        case "$PLATFORM" in
+            mac) v="$(defaults read -g AppleLocale 2>/dev/null)" ;;
+            # Termux 里 LANG 永远是 en_US，手机的语言要问安卓
+            termux) v="$(getprop persist.sys.locale 2>/dev/null)"
+                    [ -n "$v" ] || v="$(getprop ro.product.locale 2>/dev/null)" ;;
+        esac
+    fi
+    printf '%s' "${v:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}"
+}
+
+case "$(detect_lang)" in
     zh*|*zh_*|*zh-*) EST_LANG=zh ;;
     *) EST_LANG=en ;;
 esac
@@ -69,23 +113,57 @@ pause() {
     read -r _ || true
 }
 
+# 「酒馆工具箱」在这个系统上怎么打开
+toolbox_hint() {
+    if [ "$PLATFORM" = termux ]; then
+        t "输入 tavern-tools 打开工具箱" "Run tavern-tools to open the toolbox"
+    else
+        t "打开「酒馆工具箱」" "Open the toolbox"
+    fi
+}
+
 die() {
     err "$@"
-    printf '\n  %s\n' "$(t "可以双击桌面上的「酒馆工具箱」选「诊断」，把生成的报告发给帮你的人。" \
-        "Run \"diagnose\" from the toolbox and send the report to whoever helps you.")"
+    # 第一次安装失败时工具箱还不存在，不能叫用户去开它
+    if setup_done; then
+        printf '\n  %s\n' "$(t "$(toolbox_hint)，选「诊断」，把生成的报告发给帮你的人。" \
+            "$(toolbox_hint), choose Diagnose, and send the report to whoever helps you.")"
+    else
+        printf '\n  %s\n  %s\n' "$(t "可以再运行一次安装命令，已经装好的部分会跳过。" \
+            "You can run the install command again; finished steps are skipped.")" \
+            "$(t "还不行的话，把这个窗口截图发给帮你的人，或者发到：" \
+            "If it still fails, send a screenshot of this window to whoever helps you, or post it at:") $EST_ISSUES"
+    fi
     pause
     exit 1
 }
 
+# 能不能问用户问题。EST_ANSWERS="1 y" 是给自动测试用的：依次代答，不用真的敲键盘
+has_input() { [ -n "${EST_ANSWERS:-}" ] || [ -t 0 ]; }
+
+read_reply() {
+    if [ -n "${EST_ANSWERS:-}" ]; then
+        REPLY_TEXT="${EST_ANSWERS%% *}"
+        case "$EST_ANSWERS" in
+            *" "*) EST_ANSWERS="${EST_ANSWERS#* }" ;;
+            *) EST_ANSWERS="" ;;
+        esac
+        return 0
+    fi
+    read -r REPLY_TEXT || REPLY_TEXT=""
+}
+
 # ask "问题" "question" 默认值(y/n)：返回 0 表示「是」。非交互时用默认值。
 ask() {
-    local def="${3:-y}" hint reply
-    if [ "${EST_YES:-}" = 1 ]; then [ "$def" = y ]; return; fi
-    if [ ! -t 0 ]; then [ "$def" = y ]; return; fi
+    local def="${3:-y}" hint
+    if [ -z "${EST_ANSWERS:-}" ]; then
+        if [ "${EST_YES:-}" = 1 ]; then [ "$def" = y ]; return; fi
+        if [ ! -t 0 ]; then [ "$def" = y ]; return; fi
+    fi
     if [ "$def" = y ]; then hint="[Y/n]"; else hint="[y/N]"; fi
     printf '  %s %s ' "$(t "$1" "$2")" "$hint"
-    read -r reply || reply=""
-    case "$reply" in
+    read_reply
+    case "$REPLY_TEXT" in
         [Yy]*|是*|好*|要*) return 0 ;;
         [Nn]*|否*|不*) return 1 ;;
         *) [ "$def" = y ] ;;
@@ -104,12 +182,28 @@ state_set() {
     printf '%s=%s\n' "$1" "$2" >> "$STATE"
 }
 
-is_installed() { [ -x "$NODE" ] && [ -f "$APP_DIR/server.js" ]; }
+is_installed() { [ -x "$NODE" ] && [ -f "$APP_DIR/server.js" ] && [ -f "$CONFIG" ]; }
+# 安装走完了最后一步。v0.1.0 不记 SETUP，看它写过的 SHORTCUTS
+setup_done() { is_installed && { [ "$(state_get SETUP)" = "done" ] || [ -n "$(state_get SHORTCUTS)" ]; }; }
 st_version() { sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$APP_DIR/package.json" 2>/dev/null | head -n 1; }
 
 # -------------------------------------------------------- 系统检测 ---
 
 detect_system() {
+    FREE_MB=$(( $(df -Pk "$HOME" | awk 'NR==2 {print $4}') / 1024 ))
+    UNSUPPORTED=""
+    HAS_CLT=1
+    ROSETTA=0
+    case "$PLATFORM" in
+        mac) detect_mac ;;
+        linux) detect_linux ;;
+        termux) detect_termux ;;
+    esac
+}
+
+detect_mac() {
+    NODE_OS=darwin
+    MACHINE="$(t "这台 Mac" "this Mac")"
     MAC_VER="$(sw_vers -productVersion 2>/dev/null)"
     MAC_MAJOR="${MAC_VER%%.*}"
     MAC_MINOR="$(printf '%s' "$MAC_VER" | cut -d. -f2)"
@@ -118,7 +212,7 @@ detect_system() {
     if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then ARCH=arm64; else ARCH=x64; fi
     ROSETTA="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
     if xcode-select -p >/dev/null 2>&1; then HAS_CLT=1; else HAS_CLT=0; fi
-    FREE_MB=$(( $(df -k "$HOME" | awk 'NR==2 {print $4}') / 1024 ))
+    SYS_DESC="macOS $MAC_VER · $( [ "$ARCH" = arm64 ] && t "Apple 芯片" "Apple silicon" || t "Intel 芯片" "Intel" )"
 
     # Node.js 各大版本支持的最低 macOS；酒馆要求 Node 20 以上
     if [ "$MAC_MAJOR" -ge 14 ] || { [ "$MAC_MAJOR" -eq 13 ] && [ "$MAC_MINOR" -ge 5 ]; }; then
@@ -129,7 +223,45 @@ detect_system() {
         NODE_MAJOR=20
     else
         NODE_MAJOR=""
+        UNSUPPORTED="$(t "这台 Mac 的系统太旧了（${MAC_VER}），酒馆最低需要 macOS 10.15。" \
+            "macOS $MAC_VER is too old; SillyTavern needs macOS 10.15 or newer.")"
     fi
+}
+
+detect_linux() {
+    NODE_OS=linux
+    MACHINE="$(t "这台电脑" "this computer")"
+    local machine distro glibc
+    machine="$(uname -m)"
+    distro="$(. /etc/os-release 2>/dev/null; printf '%s' "${PRETTY_NAME:-Linux}")"
+    SYS_DESC="$distro · $machine"
+    case "$machine" in
+        x86_64|amd64)  ARCH=x64;    NODE_MAJOR=24 ;;
+        aarch64|arm64) ARCH=arm64;  NODE_MAJOR=24 ;;
+        # Node.js 24 起没有 32 位 ARM 版了（比如 32 位系统的树莓派）
+        armv7l|armv8l) ARCH=armv7l; NODE_MAJOR=22 ;;
+        *) ARCH="$machine"; NODE_MAJOR=""
+           UNSUPPORTED="$(t "Node.js 没有 $machine 版本，这台电脑装不了酒馆。" "Node.js has no $machine build.")" ;;
+    esac
+    # 官方的 Node.js 要 glibc 2.28 以上；Alpine 这类 musl 系统跑不了
+    glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
+    if [ -z "$glibc" ]; then
+        UNSUPPORTED="$(t "这个系统不是 glibc 的（比如 Alpine），官方 Node.js 跑不了。请换 Ubuntu、Debian、Fedora 这类系统。" \
+            "This system does not use glibc (Alpine, for example), so the official Node.js cannot run.")"
+    elif ! awk -v v="$glibc" 'BEGIN { split(v, a, "."); exit !(a[1] > 2 || (a[1] == 2 && a[2] >= 28)) }'; then
+        UNSUPPORTED="$(t "这个系统太旧了（glibc $glibc），Node.js 最低需要 glibc 2.28，比如 Ubuntu 20.04、Debian 10。" \
+            "glibc $glibc is too old; Node.js needs 2.28 or newer (Ubuntu 20.04, Debian 10).")"
+    fi
+    command -v curl >/dev/null 2>&1 || UNSUPPORTED="$(t "还没有 curl。先在终端里运行 sudo apt install curl（Fedora 用 dnf，Arch 用 pacman），再重新安装。" \
+        "curl is missing. Run sudo apt install curl (dnf on Fedora, pacman on Arch), then try again.")"
+}
+
+detect_termux() {
+    NODE_OS=android
+    NODE_MAJOR=termux
+    MACHINE="$(t "这台手机" "this phone")"
+    ARCH="$(uname -m)"
+    SYS_DESC="Android $(getprop ro.build.version.release 2>/dev/null) · $ARCH"
 }
 
 # ---------------------------------------------------------- 代理检测 ---
@@ -145,6 +277,7 @@ detect_proxy() {
         return 0
     fi
     [ "$(state_get PROXY)" = off ] && return 0
+    [ "$PLATFORM" = mac ] || return 0
 
     local dump host port kind
     dump="$(scutil --proxy 2>/dev/null)" || return 0
@@ -167,6 +300,9 @@ detect_proxy() {
     PROXY_URL="$kind://$host:$port"
     PROXY_SRC=system
 }
+
+# 代理地址里可能带账号密码，屏幕和诊断报告上都不显示
+safe_url() { printf '%s' "$1" | sed 's#//[^/@]*@#//***@#'; }
 
 apply_proxy() {
     if [ -n "$PROXY_URL" ] && [ "$PROXY_SRC" = system ]; then
@@ -205,7 +341,7 @@ choose_sources() {
     step "检测网络，挑最快的下载源" "Checking the network and picking the fastest mirrors"
     detect_proxy
     if [ -n "$PROXY_URL" ]; then
-        ok "发现代理 ${PROXY_URL}，下载会走代理" "Using proxy $PROXY_URL"
+        ok "发现代理 $(safe_url "$PROXY_URL")，下载会走代理" "Using proxy $(safe_url "$PROXY_URL")"
     elif [ -n "${PROXY_DEAD:-}" ]; then
         warn "系统代理设置成了 ${PROXY_DEAD}，但它没在运行，先不走代理" \
             "System proxy $PROXY_DEAD is set but not running; ignoring it"
@@ -287,8 +423,31 @@ fetch_quiet() {
 
 node_major_installed() { [ -x "$NODE" ] && "$NODE" -p 'process.versions.node.split(".")[0]' 2>/dev/null; }
 
+sha256_of() {
+    if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1"; else sha256sum "$1"; fi | awk '{print $1}'
+}
+
+# Termux 的软件包要先 upgrade，不然新包和旧的系统库对不上，node 一启动就报错
+install_node_termux() {
+    [ -x "$NODE" ] && "$NODE" -v >/dev/null 2>&1 && {
+        ok "已经有 Node.js $("$NODE" -v)，跳过" "Node.js $("$NODE" -v) already installed"
+        return 0
+    }
+    info "用 Termux 自带的 pkg 安装 Node.js（几分钟，看网速）" "Installing Node.js with pkg (a few minutes)"
+    export DEBIAN_FRONTEND=noninteractive
+    pkg upgrade -y -o Dpkg::Options::=--force-confold && pkg install -y nodejs-lts \
+        || die "Node.js 装不上。试试运行 termux-change-repo 换个下载源，再重新安装。" \
+               "Could not install Node.js. Run termux-change-repo to pick another mirror, then try again."
+    "$NODE" -v >/dev/null 2>&1 || die "Node.js 装好了但运行不了。" "Node.js was installed but does not run."
+    ok "Node.js $("$NODE" -v) 安装完成" "Node.js $("$NODE" -v) installed"
+}
+
 install_node() {
     step "准备 Node.js（酒馆的运行环境）" "Setting up Node.js"
+    if [ "$PLATFORM" = termux ]; then
+        install_node_termux
+        return
+    fi
     if [ "$(node_major_installed)" = "$NODE_MAJOR" ]; then
         ok "已经有 Node.js $("$NODE" -v)，跳过" "Node.js $("$NODE" -v) already installed"
         return 0
@@ -306,7 +465,7 @@ install_node() {
     [ -n "${ver:-}" ] || die "查不到 Node.js 的版本列表，网络可能不稳定，请稍后重试。" \
         "Could not get the Node.js version list."
 
-    file="node-$ver-darwin-$ARCH.tar.gz"
+    file="node-$ver-$NODE_OS-$ARCH.tar.gz"
     info "下载 Node.js ${ver}（${ARCH}，约 50 MB）" "Downloading Node.js $ver ($ARCH, ~50 MB)"
     local got=""
     for base in $NODE_MIRRORS; do
@@ -319,7 +478,7 @@ install_node() {
 
     local want have
     want="$(awk -v f="$file" '$2 == f {print $1}' "$tmp/SHASUMS256.txt")"
-    have="$(shasum -a 256 "$tmp/$file" | awk '{print $1}')"
+    have="$(sha256_of "$tmp/$file")"
     [ -n "$want" ] && [ "$want" = "$have" ] || die "Node.js 安装包校验不通过（文件可能下坏了），请重试。" \
         "Node.js checksum mismatch."
 
@@ -345,16 +504,28 @@ npm_env() {
     export PATH="$NODE_DIR/bin:$PATH"
 }
 
-# 打印 "版本 下载地址 完整性校验值"
+# 从 npm 的回应里挑最新的、这台电脑的 Node.js 跑得动的正式版。
+# 旧系统只能用旧 Node.js，酒馆哪天提高了要求，这些电脑要留在还能跑的版本上，不能装坏
+ST_PICK='
+    let s = ""; process.stdin.on("data", c => s += c).on("end", () => {
+        const j = JSON.parse(s), have = +process.versions.node.split(".")[0];
+        const need = v => +(((v.engines && v.engines.node) || "").match(/\d+/) || [0])[0];
+        const num = v => v.version.split(".").map(Number);
+        const best = (j.versions ? Object.values(j.versions) : [j])
+            .filter(v => !v.version.includes("-") && need(v) <= have)
+            .sort((a, b) => num(b)[0] - num(a)[0] || num(b)[1] - num(a)[1] || num(b)[2] - num(a)[2])[0];
+        if (!best) process.exit(1);
+        console.log(best.version, best.dist.tarball, best.dist.integrity);
+    });'
+
+# 打印 "版本 下载地址 完整性校验值"。先看 latest，不合适再翻全部版本
 st_latest_meta() {
-    local reg json
+    local reg doc json
     for reg in "$NPM_REGISTRY" "$NPM_FALLBACK"; do
-        json="$(curl -fsSL --connect-timeout 8 --max-time 30 "$reg/sillytavern/latest" 2>/dev/null)" || continue
-        printf '%s' "$json" | "$NODE" -e '
-            let s = ""; process.stdin.on("data", c => s += c).on("end", () => {
-                const j = JSON.parse(s);
-                console.log(j.version, j.dist.tarball, j.dist.integrity);
-            });' 2>/dev/null && return 0
+        for doc in sillytavern/latest sillytavern; do
+            json="$(curl -fsSL --connect-timeout 8 --max-time 60 "$reg/$doc" 2>/dev/null)" || continue
+            printf '%s' "$json" | "$NODE" -e "$ST_PICK" 2>/dev/null && return 0
+        done
     done
     return 1
 }
@@ -436,14 +607,24 @@ EOF
 
 # ------------------------------------------------------------- 配置 ---
 
+# 酒馆默认的 DEBUG 级别会把发给 AI 的完整聊天内容写进运行记录，而诊断报告带着运行记录的末尾。
+# 改成 INFO。v0.1.0 留下的旧记录里可能有聊天内容，趁改配置时一起删掉。
+# 启动时也要跑：旧工具箱自更新后，那一次更新走的还是旧代码
+quiet_logs() {
+    [ -f "$CONFIG" ] && grep -q '^  minLogLevel: 0' "$CONFIG" || return 0
+    sed 's/^  minLogLevel: 0/  minLogLevel: 1/' "$CONFIG" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
+    rm -f "$LOG_DIR"/st-*.log
+}
+
 write_config() {
     mkdir -p "$DATA_DIR" "$LOG_DIR" "$BACKUP_DIR"
     if [ ! -f "$CONFIG" ]; then
-        cp "$APP_DIR/default/config.yaml" "$CONFIG"
-        # 没装苹果开发者工具的 Mac 上一调用系统 git 就弹窗，统一用酒馆内置的 git 功能装扩展
-        sed -i '' 's/^  backend: auto$/  backend: builtin/' "$CONFIG"
+        # 没装苹果开发者工具的 Mac 上一调用系统 git 就弹窗，没装 Git 的电脑也不少，
+        # 统一用酒馆内置的 git 功能装扩展
+        sed 's/^  backend: auto$/  backend: builtin/' "$APP_DIR/default/config.yaml" > "$CONFIG"
         ok "已生成配置文件" "Config created"
     fi
+    quiet_logs
 
     # 没装开发者工具时，/usr/bin/git 只是个会弹窗的空壳，给酒馆一个直接返回失败的占位 git
     mkdir -p "$NOGIT_DIR"
@@ -479,9 +660,14 @@ find_old_data() {
         for d in "$HOME"/SillyTavern*/data "$HOME"/SillyTavern*/SillyTavern/data; do
             [ -d "$d/default-user" ] && printf '%s\n' "$d"
         done
-        find "$HOME/Desktop" "$HOME/Downloads" "$HOME/Documents" -maxdepth 6 -type d \
+        find "$EST_DESKTOP" "$HOME/Downloads" "$HOME/Documents" -maxdepth 6 -type d \
             -path '*/SillyTavern/data/default-user' 2>/dev/null | sed 's#/default-user$##'
     } | grep -v "^$EST_HOME/" | awk '!seen[$0]++'
+}
+
+# 把 src 里的东西合并复制到 dest，原文件不动
+merge_copy() {
+    if [ "$PLATFORM" = mac ]; then ditto "$1" "$2"; else cp -R "$1/." "$2/"; fi
 }
 
 # 这个数据文件夹里有多少聊天和角色，帮用户认出是哪一个
@@ -499,8 +685,7 @@ import_data() {
         do_backup auto >/dev/null || true
     fi
     mkdir -p "$DATA_DIR"
-    # ditto 合并复制，保留原文件不动
-    ditto "$src" "$DATA_DIR" || return 1
+    merge_copy "$src" "$DATA_DIR" || return 1
     ok "已导入：${2:-$src}" "Imported: ${2:-$src}"
 }
 
@@ -509,18 +694,19 @@ offer_import() {
     list="$(find_old_data)"
     [ -n "$list" ] || { [ "${1:-}" = menu ] && info "没有找到别的酒馆数据。" "No other SillyTavern data found."; return 0; }
     n="$(printf '%s\n' "$list" | wc -l | tr -d ' ')"
-    step "发现这台 Mac 上已经有酒馆的聊天记录" "Found existing SillyTavern data on this Mac"
+    step "发现${MACHINE}上已经有酒馆的聊天记录" "Found existing SillyTavern data on $MACHINE"
     printf '%s\n' "$list" | while IFS= read -r src; do
         printf '   %s) %s  %s(%s)%s\n' "$i" "${src/#$HOME/~}" "$C_D" "$(describe_data "$src")" "$C_0"
         i=$((i + 1))
     done
     info "导入是「复制」，原来的文件不会被改动。" "Importing copies the files; the originals stay untouched."
-    if [ "${EST_YES:-}" = 1 ] || [ ! -t 0 ]; then
+    if { [ "${EST_YES:-}" = 1 ] && [ -z "${EST_ANSWERS:-}" ]; } || ! has_input; then
         info "（非交互模式，跳过导入）" "(non-interactive, skipping import)"
         return 0
     fi
     printf '  %s ' "$(t "要导入哪一个？输入编号，直接回车跳过：" "Import which one? Enter a number, or press Enter to skip:")"
-    read -r choice || choice=""
+    read_reply
+    choice="$REPLY_TEXT"
     case "$choice" in
         ''|*[!0-9]*) info "跳过导入" "Skipped"; return 0 ;;
     esac
@@ -542,7 +728,7 @@ install_self() {
         # 通过 bash -c "$(curl …)" 运行时，脚本内容就在这个变量里
         printf '%s\n' "$BASH_EXECUTION_STRING" > "$SELF.new"
     fi
-    if [ -f "$SELF.new" ] && grep -q '^EST_VERSION=' "$SELF.new" && /bin/bash -n "$SELF.new" 2>/dev/null; then
+    if [ -f "$SELF.new" ] && grep -q '^EST_VERSION=' "$SELF.new" && "$BASH_BIN" -n "$SELF.new" 2>/dev/null; then
         mv "$SELF.new" "$SELF"
     else
         rm -f "$SELF.new"
@@ -555,14 +741,67 @@ write_launchers() {
     local start tools
     start="$1/$(t "酒馆 SillyTavern" "SillyTavern").command"
     tools="$1/$(t "酒馆工具箱" "SillyTavern Toolbox").command"
-    { printf '#!/bin/bash\n# Easy SillyTavern：启动酒馆\nexec /bin/bash "%s" start\n' "$SELF" > "$start" &&
-      printf '#!/bin/bash\n# Easy SillyTavern：更新、备份、诊断、卸载\nexec /bin/bash "%s" menu\n' "$SELF" > "$tools" &&
+    { printf '#!%s\n# Easy SillyTavern：启动酒馆\nexec "%s" "%s" start\n' "$BASH_BIN" "$BASH_BIN" "$SELF" > "$start" &&
+      printf '#!%s\n# Easy SillyTavern：更新、备份、诊断、卸载\nexec "%s" "%s" menu\n' "$BASH_BIN" "$BASH_BIN" "$SELF" > "$tools" &&
       chmod +x "$start" "$tools"; } 2>/dev/null || return 1
     LAUNCHERS="$start|$tools"
 }
 
+# write_commands 文件夹：放 tavern 和 tavern-tools 两个命令
+write_commands() {
+    mkdir -p "$1" 2>/dev/null || return 1
+    { printf '#!%s\nexec "%s" "%s" start\n' "$BASH_BIN" "$BASH_BIN" "$SELF" > "$1/tavern" &&
+      printf '#!%s\nexec "%s" "%s" menu\n' "$BASH_BIN" "$BASH_BIN" "$SELF" > "$1/tavern-tools" &&
+      chmod +x "$1/tavern" "$1/tavern-tools"; } 2>/dev/null
+}
+
+# desktop_entry 名字 命令：打印一个 .desktop 文件
+desktop_entry() {
+    cat <<EOF
+[Desktop Entry]
+Type=Application
+Name=$1
+Exec=$BASH_BIN "$SELF" $2
+Path=$EST_HOME
+Icon=$EST_HOME/icon.png
+Terminal=true
+Categories=Network;Chat;
+EOF
+}
+
+make_shortcuts_linux() {
+    local dir bin="$HOME/.local/bin" apps="$HOME/.local/share/applications" made="" f
+    write_commands "$bin" && made="$bin/tavern|$bin/tavern-tools"
+    cp "$APP_DIR/public/img/apple-icon-144x144.png" "$EST_HOME/icon.png" 2>/dev/null
+    for dir in "$apps" "$EST_DESKTOP"; do
+        [ "$dir" = "$apps" ] && mkdir -p "$dir" 2>/dev/null
+        [ -d "$dir" ] || continue
+        desktop_entry "$(t "酒馆 SillyTavern" "SillyTavern")" start > "$dir/easy-sillytavern.desktop" 2>/dev/null || continue
+        desktop_entry "$(t "酒馆工具箱" "SillyTavern Toolbox")" menu > "$dir/easy-sillytavern-tools.desktop" 2>/dev/null || continue
+        for f in "$dir/easy-sillytavern.desktop" "$dir/easy-sillytavern-tools.desktop"; do
+            chmod +x "$f"
+            # GNOME 的桌面图标不信任就双击不了
+            gio set "$f" metadata::trusted true >/dev/null 2>&1
+            made="$made|$f"
+        done
+    done
+    state_set SHORTCUTS "${made#|}"
+    ok "应用菜单里放好了「$(t "酒馆 SillyTavern" "SillyTavern")」和「$(t "酒馆工具箱" "SillyTavern Toolbox")」" \
+        "Added SillyTavern and its toolbox to your applications menu"
+}
+
+make_shortcuts_termux() {
+    write_commands "$NODE_DIR/bin" || return 0
+    state_set SHORTCUTS "$NODE_DIR/bin/tavern|$NODE_DIR/bin/tavern-tools"
+    ok "命令放好了：tavern 启动酒馆，tavern-tools 打开工具箱" "Commands ready: tavern starts it, tavern-tools opens the toolbox"
+}
+
 make_shortcuts() {
     [ "${EST_NO_SHORTCUTS:-}" = 1 ] && return 0
+    case "$PLATFORM" in
+        linux) make_shortcuts_linux; return ;;
+        termux) make_shortcuts_termux; return ;;
+    esac
     # 安装文件夹里总放一份，桌面上的被删了或者没放成，也能从这里找到
     write_launchers "$EST_HOME"
     # 第一次往桌面写文件时 macOS 会问「终端想访问桌面文件夹」，点了「不允许」就会失败
@@ -579,23 +818,50 @@ make_shortcuts() {
 
 # ------------------------------------------------------------- 启动 ---
 
-# 打印正在运行的「这一份」酒馆的端口。别的酒馆（比如用户自己另装的一份）占着端口不算：
-# 看监听端口的进程是不是在我们的 app 文件夹里运行
-st_running_port() {
-    local p pid want
-    want="$(cd "$APP_DIR" 2>/dev/null && pwd -P)" || return 1
-    for p in $(seq "$PORT_FIRST" "$PORT_LAST"); do
-        pid="$(lsof -nP -tiTCP:"$p" -sTCP:LISTEN 2>/dev/null | head -n 1)"
-        [ -n "$pid" ] || continue
-        if [ "$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')" = "$want" ]; then
-            printf '%s' "$p"
-            return 0
-        fi
-    done
-    return 1
+# 这个进程的命令行
+proc_cmdline() {
+    if [ "$PLATFORM" = mac ]; then
+        ps -p "$1" -o command= 2>/dev/null
+    else
+        { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null
+    fi
 }
 
-port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+# 打印正在运行的「这一份」酒馆的端口。启动时把进程号和端口记在 run.info 里，退出时删掉；
+# 窗口被强行关掉时文件还在，所以要看这个进程号现在还是不是酒馆（重启后可能被别的程序用了）。
+# 不靠 lsof 扫端口：手机和不少 Linux 上没有 lsof，安卓也不让看别的进程的端口
+st_running_port() {
+    local pid port
+    [ -f "$RUN_INFO" ] || return 1
+    read -r pid port < "$RUN_INFO" || return 1
+    [ -n "$pid" ] && [ -n "$port" ] || return 1
+    case "$(proc_cmdline "$pid")" in
+        *server.js*) printf '%s' "$port" ;;
+        *) return 1 ;;
+    esac
+}
+
+# 连得上就是有程序在听。bash 自带，不依赖 lsof
+port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+open_url() {
+    case "$PLATFORM" in
+        mac) open "$1" ;;
+        *) xdg-open "$1" >/dev/null 2>&1 & ;;
+    esac
+}
+
+# 打开文件夹或文件。打不开也没关系，路径已经显示在屏幕上了；手机上就不打开了
+show_path() {
+    case "$PLATFORM" in
+        mac) open "$@" 2>/dev/null ;;
+        linux) case "$1" in
+                   -R) xdg-open "$(dirname "$2")" >/dev/null 2>&1 & ;;
+                   -e) xdg-open "$2" >/dev/null 2>&1 & ;;
+                   *) xdg-open "$1" >/dev/null 2>&1 & ;;
+               esac ;;
+    esac
+}
 
 free_port() {
     local p pref
@@ -615,13 +881,14 @@ cmd_start() {
     if port="$(st_running_port)"; then
         ok "酒馆已经在运行，已在浏览器里打开。这个窗口可以关掉。" \
             "SillyTavern is already running; opened it in your browser."
-        [ "${EST_NO_BROWSER:-}" = 1 ] || open "http://127.0.0.1:$port/"
+        [ "${EST_NO_BROWSER:-}" = 1 ] || open_url "http://127.0.0.1:$port/"
         exit 0
     fi
     port="$(free_port)" || die "端口 ${PORT_FIRST}～$PORT_LAST 都被占用了，重启电脑后再试。" \
-        "Ports $PORT_FIRST-$PORT_LAST are all busy. Restart your Mac and try again."
+        "Ports $PORT_FIRST-$PORT_LAST are all busy. Restart your device and try again."
     [ "$port" != "$PORT_FIRST" ] && warn "$PORT_FIRST 端口被别的程序占了，这次用 $port" \
         "Port $PORT_FIRST is busy, using $port"
+    quiet_logs
 
     local extra=""
     detect_proxy
@@ -633,6 +900,17 @@ cmd_start() {
     [ "$HAS_CLT" = 1 ] || export PATH="$NOGIT_DIR:$PATH"
     export PATH="$NODE_DIR/bin:$PATH"
 
+    local keep_hint stop_hint
+    case "$PLATFORM" in
+        mac) keep_hint="$(t "用的时候【不要关掉】这个窗口" "Keep this window open while you use it")"
+             stop_hint="$(t "用完直接关掉这个窗口（问你时点「终止」）" "Close this window when you are done")" ;;
+        linux) keep_hint="$(t "用的时候【不要关掉】这个窗口" "Keep this window open while you use it")"
+               stop_hint="$(t "用完按 Ctrl+C，或者直接关掉这个窗口" "Press Ctrl+C or close this window when you are done")" ;;
+        termux) keep_hint="$(t "用的时候别把 Termux 从后台划掉，通知栏的 Termux 通知也别关" "Do not swipe Termux away while you use it")"
+                stop_hint="$(t "用完回到 Termux，按屏幕下方的 CTRL，再按 C" "Back in Termux, tap CTRL then C when you are done")"
+                termux-wake-lock 2>/dev/null ;;
+    esac
+
     clear 2>/dev/null
     cat <<EOF
 
@@ -640,11 +918,11 @@ cmd_start() {
 $(t "      酒馆 SillyTavern $(st_version) 正在启动……" "      Starting SillyTavern $(st_version)...")
 
 $(t "   · 启动好后浏览器会自动打开" "   · Your browser will open by itself")
-$(t "   · 用的时候【不要关掉】这个窗口" "   · Keep this window open while you use it")
-$(t "   · 用完直接关掉这个窗口（问你时点「终止」）" "   · Close this window when you are done")
+   · $keep_hint
+   · $stop_hint
 $(t "   · 浏览器没打开的话，手动访问 http://127.0.0.1:$port" "   · If the browser does not open: http://127.0.0.1:$port")
 EOF
-    [ -n "$PROXY_URL" ] && printf '%s\n' "$(t "   · 已自动使用代理 $PROXY_URL" "   · Using proxy $PROXY_URL")"
+    [ -n "$PROXY_URL" ] && printf '%s\n' "$(t "   · 已自动使用代理 $(safe_url "$PROXY_URL")" "   · Using proxy $(safe_url "$PROXY_URL")")"
     cat <<EOF
   ================================================
 $(t "   （下面滚动的英文是运行记录，不用管）" "   (The log below is for troubleshooting.)")
@@ -657,9 +935,13 @@ EOF
     log="$LOG_DIR/st-$(date +%Y%m%d-%H%M%S).log"
 
     cd "$APP_DIR" || die "找不到酒馆程序文件夹。" "SillyTavern folder missing."
-    # shellcheck disable=SC2086
-    NODE_ENV=production "$NODE" server.js --configPath "$CONFIG" --dataRoot "$DATA_DIR" --port "$port" $extra 2>&1 | tee -a "$log"
+    # 用 sh 先记下自己的进程号再 exec 成 node：st_running_port 靠它认出这一份酒馆
+    # shellcheck disable=SC2016,SC2086
+    NODE_ENV=production sh -c 'echo "$$ $1" > "$2"; shift 2; exec "$@"' sh "$port" "$RUN_INFO" \
+        "$NODE" server.js --configPath "$CONFIG" --dataRoot "$DATA_DIR" --port "$port" $extra 2>&1 | tee -a "$log"
     local code="${PIPESTATUS[0]}"
+    rm -f "$RUN_INFO"
+    [ "$PLATFORM" = termux ] && termux-wake-unlock 2>/dev/null
 
     echo ""
     if [ "$code" -ne 0 ] && [ "$code" -ne 130 ] && [ "$code" -ne 143 ]; then
@@ -693,18 +975,43 @@ cmd_backup() {
     local f
     f="$(do_backup manual)" || die "备份失败。" "Backup failed."
     ok "备份好了：${f}（$(du -h "$f" | awk '{print $1}')）" "Backup saved: $f"
-    open -R "$f" 2>/dev/null
+    warn "备份里有你的聊天记录和 API 密钥，只拷给自己，别发给别人。" \
+        "This backup contains your chats and API keys. Keep it to yourself."
+    show_path -R "$f"
+    # 手机的文件管理器看不到 Termux 里面，要拷到「下载」才拿得出来
+    if [ "$PLATFORM" = termux ]; then
+        if [ -d "$HOME/storage/downloads" ]; then
+            cp "$f" "$HOME/storage/downloads/" && ok "手机的「下载」文件夹里也放了一份" "Also copied to your phone's Downloads folder"
+        else
+            info "想把备份拿到 Termux 外面：先运行 termux-setup-storage 并允许，再备份一次，就会放进手机的「下载」文件夹。" \
+                "To get backups out of Termux, run termux-setup-storage, allow it, and back up again."
+        fi
+    fi
+}
+
+# 解开备份用的 zip（Windows 版做的备份是 zip）
+unzip_to() {
+    if [ "$PLATFORM" = mac ]; then
+        ditto -x -k "$1" "$2" 2>/dev/null
+    elif command -v unzip >/dev/null 2>&1; then
+        unzip -q "$1" -d "$2" 2>/dev/null
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -m zipfile -e "$1" "$2" 2>/dev/null
+    else
+        return 1
+    fi
 }
 
 cmd_restore() {
     st_running_port >/dev/null && die "请先关掉酒馆再恢复。" "Close SillyTavern first."
     local list n i=1 choice f tmp d p ext cands=""
-    # 自己的 backups 里全部都算；桌面和下载文件夹（隔空投送、微信存的文件常在这里）只认备份的文件名。
+    # 自己的 backups 里全部都算；桌面和下载文件夹（隔空投送、微信存的文件常在这里）只认备份的文件名，
+    # 用户文件夹是卸载时桌面放不了备份的退路。
     # Windows 版做的 .zip 也认，换电脑时拷过来就能恢复
     for ext in tar.gz zip; do
         cands="$cands
 $BACKUP_DIR/*.$ext"
-        for d in "$EST_DESKTOP" "$HOME/Downloads"; do
+        for d in "$EST_DESKTOP" "$HOME/Downloads" "$HOME"; do
             for p in 酒馆数据备份 SillyTavern-backup manual auto final; do
                 cands="$cands
 $d/$p-*.$ext"
@@ -720,15 +1027,16 @@ $d/$p-*.$ext"
         printf '   %s) %s  %s(%s)%s\n' "$i" "$(basename "$f")" "$C_D" "$(du -h "$f" | awk '{print $1}')" "$C_0"
         i=$((i + 1))
     done
-    [ -t 0 ] || return 0
+    has_input || return 0
     printf '  %s ' "$(t "输入编号，直接回车取消：" "Enter a number, or press Enter to cancel:")"
-    read -r choice || choice=""
+    read_reply
+    choice="$REPLY_TEXT"
     case "$choice" in ''|*[!0-9]*) return 0 ;; esac
     [ "$choice" -ge 1 ] && [ "$choice" -le "$n" ] || return 0
     f="$(printf '%s\n' "$list" | sed -n "${choice}p")"
     tmp="$(mktemp -d)"
     case "$f" in
-        *.zip) ditto -x -k "$f" "$tmp" 2>/dev/null ;;
+        *.zip) unzip_to "$f" "$tmp" ;;
         *)     tar -xzf "$f" -C "$tmp" data 2>/dev/null ;;
     esac
     [ -d "$tmp/data" ] || { rm -rf "$tmp"; die "这个备份文件打不开。" "Cannot read this backup."; }
@@ -739,6 +1047,15 @@ $d/$p-*.$ext"
 
 # ------------------------------------------------------------- 更新 ---
 
+# a 比 b 新就成功。只往新版本走：jsDelivr 发版后几个小时内还可能给旧文件
+version_gt() {
+    awk -v a="$1" -v b="$2" 'BEGIN {
+        split(a, x, "."); split(b, y, ".")
+        for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+        exit 1
+    }'
+}
+
 self_update() {
     local tmp new_ver
     tmp="$(mktemp -d)"
@@ -746,8 +1063,9 @@ self_update() {
     if fetch_quiet "$tmp/easy-st.sh" $(gh_urls "$EST_REPO" "$EST_BRANCH" mac/easy-st.sh); then
         new_ver="$(sed -n 's/^EST_VERSION="\(.*\)"$/\1/p' "$tmp/easy-st.sh" | head -n 1)"
         # 先检查语法，下坏了或者被网页替换了都不会覆盖
-        if [ -n "$new_ver" ] && [ "$new_ver" != "$EST_VERSION" ] && /bin/bash -n "$tmp/easy-st.sh" 2>/dev/null; then
-            cp "$tmp/easy-st.sh" "$SELF" && chmod +x "$SELF"
+        if [ -n "$new_ver" ] && version_gt "$new_ver" "$EST_VERSION" && "$BASH_BIN" -n "$tmp/easy-st.sh" 2>/dev/null; then
+            # 用 mv 换成新文件，不能直接覆盖：bash 是边读边跑的，脚本被改写后会读到错位的内容
+            chmod +x "$tmp/easy-st.sh" && mv "$tmp/easy-st.sh" "$SELF"
             ok "工具箱已更新到 $new_ver" "Toolbox updated to $new_ver"
         fi
     fi
@@ -770,6 +1088,7 @@ cmd_update() {
     write_config
     seed_tokenizers
     make_shortcuts
+    state_set SETUP "done"
     ok "更新完成" "Update finished"
 }
 
@@ -788,21 +1107,35 @@ cmd_rollback() {
 
 # ------------------------------------------------------------- 诊断 ---
 
+# 打印第一个真的写得进去的文件夹。macOS 上点过「不允许」的桌面，看起来存在，写的时候才失败
+writable_dir() {
+    local d
+    for d in "$@"; do
+        [ -d "$d" ] || continue
+        if { : > "$d/.est-write-test"; } 2>/dev/null; then
+            rm -f "$d/.est-write-test"
+            printf '%s' "$d"
+            return 0
+        fi
+    done
+    return 1
+}
+
 cmd_doctor() {
     detect_system
-    local report
-    report="$EST_DESKTOP/$(t "酒馆诊断报告" "SillyTavern-diagnostics")-$(date +%Y%m%d-%H%M%S).txt"
-    [ -d "$EST_DESKTOP" ] || report="$EST_HOME/diagnostics.txt"
+    local report dir
+    dir="$(writable_dir "$EST_DESKTOP" "$EST_HOME" "$HOME")" || die "找不到能写报告的文件夹。" "No writable folder for the report."
+    report="$dir/$(t "酒馆诊断报告" "SillyTavern-diagnostics")-$(date +%Y%m%d-%H%M%S).txt"
     step "正在检查……" "Checking..."
     {
         echo "Easy SillyTavern $EST_VERSION diagnostics  $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "macOS $MAC_VER  arch=$ARCH  rosetta=$ROSETTA  clt=$HAS_CLT  free=${FREE_MB}MB  lang=$EST_LANG"
+        echo "$SYS_DESC  platform=$PLATFORM  arch=$ARCH  rosetta=$ROSETTA  clt=$HAS_CLT  free=${FREE_MB}MB  lang=$EST_LANG"
         echo "home=${EST_HOME/#$HOME/~}  installed=$(is_installed && echo yes || echo no)"
         echo "node=$([ -x "$NODE" ] && "$NODE" -v || echo none)  want_major=$NODE_MAJOR"
         echo "sillytavern=$(st_version)  prev=$([ -d "$APP_DIR.prev" ] && echo yes || echo no)"
         echo "state: $(tr '\n' ' ' < "$STATE" 2>/dev/null | sed "s#$HOME#~#g")"
         detect_proxy
-        echo "proxy=${PROXY_URL:-none} src=${PROXY_SRC:-} dead=${PROXY_DEAD:-}"
+        echo "proxy=$(safe_url "${PROXY_URL:-none}") src=${PROXY_SRC:-} dead=$(safe_url "${PROXY_DEAD:-}")"
         echo "running_port=$(st_running_port || echo none)"
         local p
         for p in 8000 8001 8002; do
@@ -831,7 +1164,7 @@ cmd_doctor() {
     ok "报告在：$report" "Report saved: $report"
     info "报告里没有你的 API 密钥和聊天内容，可以放心发给别人。" \
         "The report contains no API keys or chats."
-    open -e "$report" 2>/dev/null
+    show_path -e "$report"
 }
 
 # ------------------------------------------------------------- 卸载 ---
@@ -845,15 +1178,23 @@ cmd_uninstall() {
     if [ -d "$DATA_DIR/default-user" ] && ask "先把聊天记录和角色卡备份到桌面吗？（强烈建议）" \
             "Save your chats and characters to the Desktop first? (recommended)" y; then
         keep="$(do_backup final)" || die "备份失败，没有卸载。" "Backup failed; nothing was removed."
-        local dest
-        dest="$EST_DESKTOP/$(t "酒馆数据备份" "SillyTavern-backup")-$(date +%Y%m%d-%H%M%S).tar.gz"
-        mv "$keep" "$dest" && keep="$dest"
+        # 备份绝不能留在马上要删的文件夹里。桌面放不了（比如点过「不允许」）就放用户文件夹
+        local dir dest
+        dir="$(writable_dir "$EST_DESKTOP" "$HOME")" || die "备份没地方放（还在 ${keep}），没有卸载。" \
+            "Nowhere to put the backup (still at $keep); nothing was removed."
+        dest="$dir/$(t "酒馆数据备份" "SillyTavern-backup")-$(date +%Y%m%d-%H%M%S).tar.gz"
+        mv "$keep" "$dest" || die "备份挪不出来（还在 ${keep}），没有卸载。" \
+            "Could not move the backup (still at $keep); nothing was removed."
+        keep="$dest"
         ok "备份在：$keep" "Backup: $keep"
     fi
     ask "确定删除 $EST_HOME 吗？" "Delete $EST_HOME?" n || { info "已取消" "Cancelled"; return 0; }
-    local s
-    s="$(state_get SHORTCUTS)"
-    rm -f "${s%%|*}" "${s##*|}"
+    local f
+    # SHORTCUTS 是用 | 隔开的一串路径
+    state_get SHORTCUTS | tr '|' '\n' | while IFS= read -r f; do
+        [ -n "$f" ] && rm -f "$f"
+    done
+    cd "$HOME" || true
     rm -rf "$EST_HOME"
     ok "已卸载。" "Uninstalled."
     exit 0
@@ -889,7 +1230,14 @@ EOF
             1) cmd_start ;;
             2) cmd_update; pause ;;
             3) cmd_backup; pause ;;
-            4) open "$DATA_DIR/default-user" 2>/dev/null || open "$DATA_DIR"; ;;
+            4) if [ "$PLATFORM" = termux ]; then
+                   info "$DATA_DIR/default-user"
+                   pause
+               elif [ -d "$DATA_DIR/default-user" ]; then
+                   show_path "$DATA_DIR/default-user"
+               else
+                   show_path "$DATA_DIR"
+               fi ;;
             5) offer_import menu; pause ;;
             6) cmd_restore; pause ;;
             7) cmd_doctor; pause ;;
@@ -912,15 +1260,20 @@ $(t "      不需要管理员密码，全程大约 2～5 分钟" "      No admin
   ================================================
 EOF
     detect_system
-    step "检查这台 Mac" "Checking this Mac"
-    info "macOS $MAC_VER · $( [ "$ARCH" = arm64 ] && t "Apple 芯片" "Apple silicon" || t "Intel 芯片" "Intel" )"
-    [ -n "$NODE_MAJOR" ] || die "这台 Mac 的系统太旧了（${MAC_VER}），酒馆最低需要 macOS 10.15。" \
-        "macOS $MAC_VER is too old; SillyTavern needs macOS 10.15 or newer."
+    step "检查$MACHINE" "Checking $MACHINE"
+    info "$SYS_DESC"
+    if [ -n "$UNSUPPORTED" ]; then
+        # 再运行一次也没用，别走 die 的那套提示
+        err "$UNSUPPORTED"
+        pause
+        exit 1
+    fi
     [ "$NODE_MAJOR" = 20 ] && warn "系统比较旧，只能用 Node.js 20（已停止维护），建议升级 macOS。" \
         "Old macOS: falling back to Node.js 20, which is end-of-life."
     [ "$FREE_MB" -ge 1500 ] || die "硬盘空间不够，至少需要 1.5 GB，现在只剩 ${FREE_MB} MB。" \
         "Not enough disk space: need 1.5 GB, have ${FREE_MB} MB."
     if is_installed; then
+        st_running_port >/dev/null && die "酒馆正在运行。请先关掉酒馆的窗口，再来安装。" "SillyTavern is running. Close it first."
         ok "之前已经装过（$(st_version)），这次会检查更新并修复" "Already installed ($(st_version)); updating and repairing"
     fi
     ok "可以安装" "Ready to install"
@@ -933,10 +1286,19 @@ EOF
     seed_tokenizers
     [ -d "$DATA_DIR/default-user" ] || offer_import
     make_shortcuts
+    state_set SETUP "done"
 
+    local done_msg
+    case "$PLATFORM" in
+        mac) done_msg="$(t "  安装完成！以后双击桌面上的「酒馆 SillyTavern」就能用。" \
+                 "  Done! Double-click \"SillyTavern\" on your Desktop to start it.")" ;;
+        linux) done_msg="$(t "  安装完成！以后在应用菜单里打开「酒馆 SillyTavern」就能用。" \
+                   "  Done! Open \"SillyTavern\" from your applications menu to start it.")" ;;
+        termux) done_msg="$(t "  安装完成！以后打开 Termux，输入 tavern 按回车就能用。" \
+                    "  Done! Open Termux and run tavern to start it.")" ;;
+    esac
     printf '\n  %s================================================%s\n' "$C_G" "$C_0"
-    printf '  %s%s%s\n' "$C_G" "$(t "  安装完成！以后双击桌面上的「酒馆 SillyTavern」就能用。" \
-        "  Done! Double-click \"SillyTavern\" on your Desktop to start it.")" "$C_0"
+    printf '  %s%s%s\n' "$C_G" "$done_msg" "$C_0"
     printf '  %s================================================%s\n' "$C_G" "$C_0"
     if [ "${EST_NO_START:-}" = 1 ]; then return 0; fi
     if ask "现在就启动酒馆吗？" "Start SillyTavern now?" y; then
@@ -946,7 +1308,7 @@ EOF
 
 usage() {
     cat <<EOF
-Easy SillyTavern $EST_VERSION (macOS)
+Easy SillyTavern $EST_VERSION ($PLATFORM)
 usage: easy-st.sh [install|start|menu|update|backup|restore|import|doctor|rollback|uninstall]
 EOF
 }
@@ -954,7 +1316,8 @@ EOF
 main() {
     local cmd="${1:-}"
     if [ -z "$cmd" ]; then
-        if is_installed && [ -f "$SELF" ]; then cmd=menu; else cmd=install; fi
+        # 装到一半被打断的，再运行一次要接着装，不能直接进工具箱（桌面图标还没放呢）
+        if setup_done && [ -f "$SELF" ]; then cmd=menu; else cmd=install; fi
     fi
     case "$cmd" in
         install)   cmd_install ;;
@@ -962,7 +1325,7 @@ main() {
         menu)      detect_system; cmd_menu ;;
         update)    cmd_update; pause ;;
         backup)    cmd_backup ;;
-        import)    offer_import menu ;;
+        import)    detect_system; offer_import menu ;;
         restore)   cmd_restore ;;
         doctor)    cmd_doctor ;;
         rollback)  cmd_rollback ;;
@@ -973,3 +1336,4 @@ main() {
 }
 
 main "$@"
+exit $?
