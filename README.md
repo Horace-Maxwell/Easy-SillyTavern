@@ -217,6 +217,8 @@ bash -c "$(curl -fsSL -m 30 https://fastly.jsdelivr.net/gh/Horace-Maxwell/Easy-S
 | 连不上 OpenAI / Claude / Gemini | 打开代理软件的「系统代理」，然后**重新启动酒馆**（关掉黑色窗口再双击） |
 | 装到一半网断了 | 重新粘贴那一行命令，已经装好的部分会跳过 |
 | 更新后酒馆出问题 | 工具箱选 **8 退回上一个版本** |
+| 酒馆突然打不开了，窗口里一堆红字 | 如果它问「现在重新下载修复吗？」，直接按回车，它会重新下载程序，聊天记录不动。没问的话，再运行一次安装命令 |
+| Mac / Linux：提示「请不要在命令前面加 sudo」 | 照它说的，去掉 `sudo` 重新粘贴。安装不需要管理员权限 |
 | 想用手机访问电脑上的酒馆 | 暂时不支持。安卓手机可以[直接装在手机上](#-安卓手机安装) |
 | Windows：提示找不到 `curl.exe` | 系统太旧了，先装 Windows 更新，或者用上面的 ZIP 方式 |
 | Windows：「Windows 已保护你的电脑」 | 点「更多信息」→「仍要运行」 |
@@ -264,7 +266,7 @@ SillyTavern-Easy/
 - 酒馆默认的 DEBUG 日志会写下完整聊天内容，这里改成 INFO，运行记录和诊断报告里都不会有
 - 端到端测试：[tests/smoke.sh](tests/smoke.sh)、[tests/smoke.ps1](tests/smoke.ps1)，CI 在 macOS、Ubuntu、Termux、Windows 上都跑，README 里的安装命令也会原样跑一遍
 - 常用环境变量：`EST_HOME`（安装位置）、`EST_LANG=zh|en`、`EST_YES=1`（不问问题）、`EST_NO_START=1`、`EST_NO_BROWSER=1`、`EST_NO_SHORTCUTS=1`
-- 命令：`easy-st.sh install | start | menu | update | backup | restore | import | doctor | rollback | uninstall`（Windows：`powershell -ExecutionPolicy Bypass -File easy-st.ps1 <命令>`）
+- 命令：`easy-st.sh install | start | menu | update | backup | restore | import | doctor | rollback | repair | uninstall`（Windows：`powershell -ExecutionPolicy Bypass -File easy-st.ps1 <命令>`）
 - 两边要对齐的行为：[docs/DESIGN.md](docs/DESIGN.md)
 
 </details>

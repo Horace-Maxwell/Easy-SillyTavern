@@ -394,7 +394,9 @@ fetch() {
     for u in "$@"; do
         [ -n "$u" ] || continue
         rm -f "$dest.part"
-        if curl -fL --connect-timeout 10 --retry 2 --retry-delay 2 --progress-bar -o "$dest.part" "$u"; then
+        # 30 秒内几乎没数据就放弃：国内网络常见「连上了但不给数据」，不设这个会一直卡着
+        if curl -fL --connect-timeout 10 --retry 2 --retry-delay 2 --speed-time 30 --speed-limit 1000 \
+                --progress-bar -o "$dest.part" "$u"; then
             mv "$dest.part" "$dest"
             return 0
         fi
@@ -538,7 +540,12 @@ verify_integrity() {
         process.exit(h === sri.slice(i + 1) ? 0 : 1);' "$1" "$2"
 }
 
-# install_st [force]：装最新版酒馆；已经是最新版就跳过
+# 程序文件还全不全（粗查）：杀毒软件删过文件、硬盘满时更新到一半，都会缺东西
+app_healthy() {
+    [ -d "$APP_DIR/node_modules" ] && (cd "$APP_DIR" && "$NODE" -e 'require.resolve("express")') >/dev/null 2>&1
+}
+
+# install_st [force]：装最新版酒馆；已经是最新版而且文件完整就跳过
 install_st() {
     step "下载酒馆 SillyTavern" "Downloading SillyTavern"
     npm_env
@@ -549,7 +556,7 @@ install_st() {
 $meta
 EOF
     cur="$(st_version)"
-    if [ "$cur" = "$ver" ] && [ -d "$APP_DIR/node_modules" ] && [ "${1:-}" != force ]; then
+    if [ "$cur" = "$ver" ] && app_healthy && [ "${1:-}" != force ]; then
         ok "已经是最新版 $ver" "Already on the latest version $ver"
         return 0
     fi
@@ -944,15 +951,42 @@ EOF
     [ "$PLATFORM" = termux ] && termux-wake-unlock 2>/dev/null
 
     echo ""
+    # 酒馆启动失败时自己会说 critical error，但退出码还是 0，所以两样都要看
+    if grep -q 'A critical error has occurred' "$log" 2>/dev/null; then
+        [ "$code" -ne 0 ] || code=1
+    fi
     if [ "$code" -ne 0 ] && [ "$code" -ne 130 ] && [ "$code" -ne 143 ]; then
         err "酒馆意外退出了（错误码 ${code}）。" "SillyTavern exited unexpectedly (code $code)."
         info "运行记录：$log" "Log: $log"
+        offer_repair "$log"
         info "可以打开「酒馆工具箱」选「诊断」生成报告。" "Run diagnose from the toolbox for a report."
     else
         ok "酒馆已关闭。" "SillyTavern stopped."
     fi
     pause
     exit "$code"
+}
+
+# 酒馆因为程序文件缺了、坏了而起不来时，问一句就重新下载一份。聊天记录在 data 里，不会动
+offer_repair() {
+    grep -qE 'Cannot find (module|package)|MODULE_NOT_FOUND|SyntaxError' "$1" 2>/dev/null || return 0
+    has_input || return 0
+    warn "看起来酒馆的程序文件不完整。" "SillyTavern's program files look incomplete."
+    ask "现在重新下载修复吗？（聊天记录不会动）" "Download a fresh copy now? (Your chats are not touched.)" y || return 0
+    cmd_repair
+    ok "修好了，再启动一次试试。" "Repaired. Try starting it again."
+}
+
+cmd_repair() {
+    detect_system
+    lock
+    choose_sources
+    install_node
+    install_st force
+    # 换下来的那份是坏的，不能留着当「上一个版本」让人退回去
+    rm -rf "$APP_DIR.prev"
+    write_config
+    unlock
 }
 
 # ------------------------------------------------------------- 备份 ---
@@ -964,8 +998,14 @@ do_backup() {
     local kind="${1:-manual}" f
     f="$BACKUP_DIR/$kind-$(date +%Y%m%d-%H%M%S).tar.gz"
     # 缓存类的文件夹不备份，能自己重新生成
+    local rc=0
     tar -czf "$f" -C "$EST_HOME" --exclude 'data/_cache' --exclude 'data/_webpack' --exclude 'data/_uploads' \
-        data config.yaml 2>/dev/null || { rm -f "$f"; return 1; }
+        data config.yaml 2>/dev/null || rc=$?
+    # Linux 和 Termux 的 tar 用 1 表示「打包时有文件正在变」，酒馆开着时备份很常见，包是好的
+    if [ "$rc" -ne 0 ] && ! { [ "$rc" -eq 1 ] && [ "$PLATFORM" != mac ] && [ -s "$f" ]; }; then
+        rm -f "$f"
+        return 1
+    fi
     ls -1t "$BACKUP_DIR"/auto-*.tar.gz 2>/dev/null | tail -n +6 | while IFS= read -r old; do rm -f "$old"; done
     printf '%s' "$f"
 }
@@ -1072,12 +1112,36 @@ self_update() {
     rm -rf "$tmp"
 }
 
+# 同一时间只让一个安装 / 更新动程序文件：命令粘贴了两次、开了两个工具箱都更新，会互相踩坏。
+# 锁是一个文件夹，里面记着进程号；那个进程不在了就是上次被强行关掉留下的，可以接手
+lock() {
+    local dir="$EST_HOME/.lock" pid
+    mkdir -p "$EST_HOME"
+    if ! mkdir "$dir" 2>/dev/null; then
+        pid="$(cat "$dir/pid" 2>/dev/null)"
+        if [ -n "$pid" ] && [ "$pid" != "$$" ] && kill -0 "$pid" 2>/dev/null; then
+            err "另一个窗口正在安装或更新，等它跑完就行，这个窗口可以关掉。" \
+                "Another window is already installing or updating. Let it finish; you can close this one."
+            pause
+            exit 1
+        fi
+    fi
+    echo "$$" > "$dir/pid"
+    trap unlock EXIT
+}
+
+unlock() {
+    [ "$(cat "$EST_HOME/.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$EST_HOME/.lock"
+    trap - EXIT
+}
+
 cmd_update() {
     is_installed || die "酒馆还没装好，请重新运行安装命令。" "SillyTavern is not installed yet."
     if st_running_port >/dev/null; then
         die "酒馆正在运行。请先关掉酒馆的黑色窗口，再来更新。" "SillyTavern is running. Close it first."
     fi
     detect_system
+    lock
     choose_sources
     self_update
     step "更新前先自动备份" "Backing up before updating"
@@ -1089,6 +1153,7 @@ cmd_update() {
     seed_tokenizers
     make_shortcuts
     state_set SETUP "done"
+    unlock
     ok "更新完成" "Update finished"
 }
 
@@ -1259,6 +1324,13 @@ $(t "      酒馆 SillyTavern 一键安装" "      SillyTavern one-click install
 $(t "      不需要管理员密码，全程大约 2～5 分钟" "      No admin password needed, about 2-5 minutes")
   ================================================
 EOF
+    # 加了 sudo 的话，装出来的文件都归管理员，以后双击图标（普通身份）就打不开、更新不了
+    if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
+        err "请不要在命令前面加 sudo。去掉 sudo，重新粘贴原来那一行就行。" \
+            "Please run this without sudo: paste the original line again, as is."
+        pause
+        exit 1
+    fi
     detect_system
     step "检查$MACHINE" "Checking $MACHINE"
     info "$SYS_DESC"
@@ -1276,6 +1348,14 @@ EOF
         st_running_port >/dev/null && die "酒馆正在运行。请先关掉酒馆的窗口，再来安装。" "SillyTavern is running. Close it first."
         ok "之前已经装过（$(st_version)），这次会检查更新并修复" "Already installed ($(st_version)); updating and repairing"
     fi
+    if ! { mkdir -p "$EST_HOME" 2>/dev/null && writable_dir "$EST_HOME" >/dev/null; }; then
+        err "安装文件夹写不进去：${EST_HOME}。多半是以前加 sudo 装过。" "Cannot write to the install folder: $EST_HOME (often left by an earlier sudo install)."
+        info "修法：在终端里运行下面这一行（会问开机密码），然后重新安装：" "Fix: run this line in the terminal (it asks for your login password), then install again:"
+        printf '\n    sudo chown -R "$(id -un)" "%s"\n' "$EST_HOME"
+        pause
+        exit 1
+    fi
+    lock
     ok "可以安装" "Ready to install"
 
     choose_sources
@@ -1287,6 +1367,7 @@ EOF
     [ -d "$DATA_DIR/default-user" ] || offer_import
     make_shortcuts
     state_set SETUP "done"
+    unlock
 
     local done_msg
     case "$PLATFORM" in
@@ -1309,7 +1390,7 @@ EOF
 usage() {
     cat <<EOF
 Easy SillyTavern $EST_VERSION ($PLATFORM)
-usage: easy-st.sh [install|start|menu|update|backup|restore|import|doctor|rollback|uninstall]
+usage: easy-st.sh [install|start|menu|update|backup|restore|import|doctor|rollback|repair|uninstall]
 EOF
 }
 
@@ -1329,6 +1410,7 @@ main() {
         restore)   cmd_restore ;;
         doctor)    cmd_doctor ;;
         rollback)  cmd_rollback ;;
+        repair)    cmd_repair ;;
         uninstall) cmd_uninstall ;;
         version|-v|--version) echo "$EST_VERSION" ;;
         *) usage; exit 2 ;;

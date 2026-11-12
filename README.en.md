@@ -219,6 +219,8 @@ New computer: install, then Toolbox → **6 Restore** and pick the file. Backups
 | Can't reach OpenAI / Claude / Gemini behind a proxy | Turn on your proxy app's "system proxy", then restart SillyTavern |
 | Network dropped mid-install | Paste the line again; finished parts are skipped |
 | Something broke after an update | Toolbox → **8 Roll back** |
+| SillyTavern suddenly won't start | If it asks "Download a fresh copy now?", press Enter; it re-downloads the program and leaves your chats alone. Otherwise run the install line again |
+| Mac / Linux: "Please run this without sudo" | Do as it says: paste the line again without `sudo`. No admin rights are needed |
 | Windows: `curl.exe` not found | Windows is too old; install updates, or use the ZIP method |
 | Android: SillyTavern exits with `signal 9` | Android 12+ kills background processes. In **Settings → Developer options**, turn on "Disable child process restrictions" (the name varies by phone), and turn off battery optimization for Termux |
 | Android: getting a backup out of Termux | Run `termux-setup-storage` once and allow it; backups are then also copied to your phone's Downloads folder |
@@ -259,7 +261,7 @@ SillyTavern-Easy/
 - SillyTavern's default DEBUG log records full prompts, so the installer sets it to INFO; chats stay out of the logs and the diagnostic report
 - End-to-end tests: [tests/smoke.sh](tests/smoke.sh) and [tests/smoke.ps1](tests/smoke.ps1). CI runs them on macOS, Ubuntu, Termux and Windows, and runs the README's install commands verbatim
 - Environment variables: `EST_HOME` (install location), `EST_LANG=zh|en`, `EST_YES=1` (no prompts), `EST_NO_START=1`, `EST_NO_BROWSER=1`, `EST_NO_SHORTCUTS=1`
-- Commands: `easy-st.sh install | start | menu | update | backup | restore | import | doctor | rollback | uninstall` (Windows: `powershell -ExecutionPolicy Bypass -File easy-st.ps1 <command>`)
+- Commands: `easy-st.sh install | start | menu | update | backup | restore | import | doctor | rollback | repair | uninstall` (Windows: `powershell -ExecutionPolicy Bypass -File easy-st.ps1 <command>`)
 - Behaviour both platforms must share: [docs/DESIGN.md](docs/DESIGN.md)
 
 </details>

@@ -78,6 +78,12 @@ SillyTavern-Easy/
    - Termux：`$PREFIX/bin` 放 `tavern`、`tavern-tools`
 9. 问「现在就启动吗？」，默认是
 
+同一时间只让一个安装 / 更新 / 修复动程序文件：安装目录里的 `.lock` 记着进程号（Mac 这边是文件夹 `.lock/pid`，Windows 是文件 `.lock`），那个进程还活着就让后来的退出；不在了说明上次被强行关掉，直接接手。
+
+下载大文件时 curl 带 `--speed-time 30 --speed-limit 1000`：国内网络常见「连上了但不给数据」，不设会一直卡住。
+
+Mac、Linux 上发现命令前面加了 `sudo`（`SUDO_USER` 有值）就拒绝：装出来的文件归管理员，以后普通身份打不开。安装目录写不进去时，给出 `sudo chown` 那一行修法。
+
 ## 启动（start）
 
 1. 如果「这一份」酒馆已经在跑 → 打开浏览器，退出。**别的酒馆占着端口不算**，要换个端口启动。判断方法：
@@ -87,7 +93,8 @@ SillyTavern-Easy/
 3. 每次启动都重新检测代理；有可用代理就加 `--requestProxyEnabled=true --requestProxyUrl=<代理>`（`state.env` 里 `PROXY=off` 可关掉）
 4. `cd app && node server.js --configPath <config.yaml> --dataRoot <data> --port <端口>`，输出同时写到 `logs/`
 5. 窗口顶部用中文告诉用户：别关窗口、用完关窗口、浏览器没开就访问哪个地址、是否在走代理
-6. 异常退出时提示错误码和诊断；Ctrl+C / 关窗口不算异常
+6. 异常退出时提示错误码和诊断；Ctrl+C / 关窗口不算异常。酒馆启动失败时退出码是 0，只在输出里说 `A critical error has occurred`，所以这句话也算异常退出
+7. 异常退出而且运行记录里有 `Cannot find module`、`MODULE_NOT_FOUND`、`SyntaxError` 时，多半是程序文件缺了（杀毒软件删的、硬盘满时更新到一半）：问一句「现在重新下载修复吗」，默认是，然后强制重装 `app/`，`data/` 不动。命令行里是 `repair`。安装 / 更新时「已经是最新版」也要先粗查一下文件全不全（`node_modules/express` 在不在）才跳过
 
 ## 代理检测
 
@@ -121,7 +128,7 @@ SillyTavern-Easy/
 ```
 1) 启动酒馆
 2) 检查更新         运行中拒绝；先自更新工具箱 → 自动备份 → Node → 酒馆 → 配置 → 分词器 → 快捷方式
-3) 备份             data + config.yaml，排除 data/_cache、_webpack、_uploads
+3) 备份             data + config.yaml，排除 data/_cache、_webpack、_uploads。Linux / Termux 的 tar 返回 1 只是「打包时文件在变」，不算失败
 4) 打开数据文件夹
 5) 从别的酒馆导入
 6) 从备份恢复       列 backups/ 里的全部备份，加上桌面和下载文件夹里以 酒馆数据备份- SillyTavern-backup- manual- auto- final- 开头的 .zip / .tar.gz（两边的格式都认）；选编号；恢复前先备份当前

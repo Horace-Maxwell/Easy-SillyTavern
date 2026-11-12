@@ -153,6 +153,21 @@ require('http').createServer((q, r) => {
 
     check '检查更新' ((run 'update' @('update')) -eq 0)
 
+    # -------------------------------------------- 锁、自动修复 ---
+    # 另一个安装还在跑的时候（这里拿测试自己的进程号冒充），再来一个要被挡住
+    [IO.File]::WriteAllText("$env:EST_HOME\.lock", "$PID")
+    check '另一个安装在跑时不让再装' ((run 'locked' @('install') 120) -eq 1)
+    Remove-Item -LiteralPath "$env:EST_HOME\.lock" -Force
+
+    # 模拟程序文件被删坏：启动会失败，答一个 y 就应该重新下载修好，聊天记录不动
+    Remove-Item -LiteralPath "$env:EST_HOME\app\node_modules\express" -Recurse -Force
+    $env:EST_ANSWERS = 'y'
+    [void](run 'repair' @('start') 900)
+    $env:EST_ANSWERS = ''
+    check '程序文件坏了能自己修好' (Test-Path -LiteralPath "$env:EST_HOME\app\node_modules\express\package.json")
+    check '修复不动聊天记录' (Test-Path -LiteralPath $chat)
+    check '修完锁放开了' (-not (Test-Path -LiteralPath "$env:EST_HOME\.lock"))
+
     # ------------------------------------------------------------ 卸载 ---
     $env:EST_ANSWERS = 'y y'
     [void](run 'uninstall' @('uninstall'))

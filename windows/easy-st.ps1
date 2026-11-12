@@ -509,7 +509,8 @@ function download([string]$url, [string]$out, [bool]$quiet) {
         if ($quiet) {
             & $CURL -fsSL --connect-timeout 8 --max-time 60 @CURL_TLS -o $out $url 2>$null
         } else {
-            & $CURL -fL --connect-timeout 10 --retry 2 --retry-delay 2 --progress-bar @CURL_TLS -o $out $url
+            # 30 秒内几乎没数据就放弃：国内网络常见「连上了但不给数据」，不设这个会一直卡着
+            & $CURL -fL --connect-timeout 10 --retry 2 --retry-delay 2 --speed-time 30 --speed-limit 1000 --progress-bar @CURL_TLS -o $out $url
         }
         return ($LASTEXITCODE -eq 0)
     }
@@ -711,7 +712,30 @@ function extract_tgz([string]$file, [string]$dest, [int]$strip) {
     $false
 }
 
-# install_st [force]：装最新版酒馆；已经是最新版就跳过
+# 程序文件还全不全（粗查）：杀毒软件删过文件、硬盘满时更新到一半，都会缺东西
+function app_healthy {
+    if (-not (Test-Path -LiteralPath "$APP_DIR\node_modules\express\package.json")) { return $false }
+    Test-Path -LiteralPath "$APP_DIR\server.js"
+}
+
+# 同一时间只让一个安装 / 更新动程序文件：命令粘贴了两次、开了两个工具箱都更新，会互相踩坏。
+# 锁文件里记着进程号；那个进程不在了就是上次被强行关掉留下的，可以接手
+function lock {
+    ensure_dir $EST_HOME
+    $f = "$EST_HOME\.lock"
+    $other = 0
+    try { $other = [int]([IO.File]::ReadAllText($f).Trim()) } catch {}
+    if ($other -and $other -ne $PID -and (Get-Process -Id $other -ErrorAction SilentlyContinue)) {
+        err '另一个窗口正在安装或更新，等它跑完就行，这个窗口可以关掉。' 'Another window is already installing or updating. Let it finish; you can close this one.'
+        pause
+        exit 1
+    }
+    [IO.File]::WriteAllText($f, "$PID")
+}
+
+function unlock { Remove-Item -LiteralPath "$EST_HOME\.lock" -Force -ErrorAction SilentlyContinue }
+
+# install_st [force]：装最新版酒馆；已经是最新版而且文件完整就跳过
 function install_st([string]$mode = '') {
     step '下载酒馆 SillyTavern' 'Downloading SillyTavern'
     npm_env
@@ -719,7 +743,7 @@ function install_st([string]$mode = '') {
     if (-not $meta) { die '查不到酒馆的最新版本，网络可能不稳定，请稍后重试。' 'Could not look up the latest SillyTavern version.' }
     $ver = $meta.Version
     $cur = st_version
-    if ($cur -eq $ver -and (Test-Path -LiteralPath "$APP_DIR\node_modules") -and $mode -ne 'force') {
+    if ($cur -eq $ver -and (app_healthy) -and $mode -ne 'force') {
         ok "已经是最新版 $ver" "Already on the latest version $ver"
         return
     }
@@ -1136,16 +1160,44 @@ function cmd_start {
     }
 
     Write-Host ''
+    # 酒馆启动失败时自己会说 critical error，但退出码还是 0，所以两样都要看
+    if ($code -eq 0 -and (Select-String -LiteralPath $log -Pattern 'A critical error has occurred' -Quiet -Encoding UTF8)) { $code = 1 }
     # -1073741510 是 Ctrl+C 结束时 Windows 给的退出码
     if ($code -ne 0 -and $code -ne 130 -and $code -ne -1073741510) {
         err "酒馆意外退出了（错误码 ${code}）。" "SillyTavern exited unexpectedly (code $code)."
         info "运行记录：$log" "Log: $log"
+        offer_repair $log
         info '可以打开「酒馆工具箱」选「诊断」生成报告。' 'Run Diagnose from the toolbox for a report.'
     } else {
         ok '酒馆已关闭。' 'SillyTavern stopped.'
     }
     pause
     exit $code
+}
+
+# 酒馆因为程序文件缺了、坏了而起不来时，问一句就重新下载一份。聊天记录在 data 里，不会动
+function offer_repair([string]$log) {
+    if (-not (Select-String -LiteralPath $log -Pattern 'Cannot find (module|package)|MODULE_NOT_FOUND|SyntaxError' -Quiet -Encoding UTF8)) { return }
+    if (-not (is_interactive)) { return }
+    warn '看起来酒馆的程序文件不完整。' "SillyTavern's program files look incomplete."
+    if (-not (ask '现在重新下载修复吗？（聊天记录不会动）' 'Download a fresh copy now? (Your chats are not touched.)' 'y')) { return }
+    cmd_repair
+    ok '修好了，再启动一次试试。' 'Repaired. Try starting it again.'
+}
+
+function cmd_repair {
+    # 启动失败后走到这里时，当前文件夹还是 app；Windows 上被占着的文件夹改不了名
+    Set-Location -LiteralPath $EST_HOME
+    detect_system
+    lock
+    choose_sources
+    install_node
+    install_st 'force'
+    # 换下来的那份是坏的，不能留着当「上一个版本」让人退回去
+    remove_dir "$APP_DIR.prev"
+    write_config
+    remove_dir $TMP_ROOT
+    unlock
 }
 
 # ------------------------------------------------------------- 备份 ---
@@ -1264,6 +1316,7 @@ function cmd_update {
     if (-not (is_installed)) { die '酒馆还没装好，请重新运行安装命令。' 'SillyTavern is not installed yet.' }
     if (st_running_port) { die '酒馆正在运行。请先关掉酒馆的黑色窗口，再来更新。' 'SillyTavern is running. Close it first.' }
     detect_system
+    lock
     choose_sources
     self_update
     step '更新前先自动备份' 'Backing up before updating'
@@ -1276,6 +1329,7 @@ function cmd_update {
     make_shortcuts
     state_set 'SETUP' 'done'
     remove_dir $TMP_ROOT
+    unlock
     ok '更新完成' 'Update finished'
 }
 
@@ -1481,6 +1535,7 @@ function cmd_install {
         if (st_running_port) { die '酒馆正在运行。请先关掉酒馆的黑色窗口，再来安装。' 'SillyTavern is running. Close it first.' }
         ok "之前已经装过（$(st_version)），这次会检查更新并修复" "Already installed ($(st_version)); updating and repairing"
     }
+    lock
     ok '可以安装' 'Ready to install'
 
     choose_sources
@@ -1493,6 +1548,7 @@ function cmd_install {
     make_shortcuts
     state_set 'SETUP' 'done'
     remove_dir $TMP_ROOT
+    unlock
 
     Write-Host ''
     Write-Host '  ================================================' -ForegroundColor Green
@@ -1507,7 +1563,7 @@ function cmd_install {
 
 function usage {
     Write-Host "Easy SillyTavern $EST_VERSION (Windows)"
-    Write-Host 'usage: easy-st.ps1 [install|start|menu|update|backup|restore|import|doctor|rollback|uninstall]'
+    Write-Host 'usage: easy-st.ps1 [install|start|menu|update|backup|restore|import|doctor|rollback|repair|uninstall]'
 }
 
 # 没料到的错误也给一句人话，并且停住窗口，不要一闪就没了
@@ -1534,6 +1590,7 @@ switch ($cmd) {
     'restore' { cmd_restore }
     'doctor' { cmd_doctor }
     'rollback' { cmd_rollback }
+    'repair' { cmd_repair }
     'uninstall' { cmd_uninstall }
     'version' { Write-Output $EST_VERSION }
     default { usage; exit 2 }

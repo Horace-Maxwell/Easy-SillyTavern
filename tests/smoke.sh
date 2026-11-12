@@ -160,6 +160,20 @@ check "走完后记下了" grep -q '^SETUP=done' "$EST_HOME/state.env"
 run update > "$work/update.log" 2>&1
 check "检查更新" grep -q '更新完成' "$work/update.log"
 
+# ------------------------------------------------------ 锁、自动修复 ---
+
+# 另一个安装还在跑的时候（这里拿测试自己的进程号冒充），再来一个要被挡住
+mkdir -p "$EST_HOME/.lock" && echo "$$" > "$EST_HOME/.lock/pid"
+refuse "另一个安装在跑时不让再装" run install
+rm -rf "$EST_HOME/.lock"
+
+# 模拟程序文件被删坏：启动会失败，答一个 y 就应该重新下载修好，聊天记录不动
+rm -rf "$EST_HOME/app/node_modules/express"
+EST_ANSWERS=y run start > "$work/repair.log" 2>&1
+check "程序文件坏了能自己修好" test -f "$EST_HOME/app/node_modules/express/package.json"
+check "修复不动聊天记录" test -f "$chat"
+refuse "修完锁放开了" test -e "$EST_HOME/.lock"
+
 # ---------------------------------------------------------------- 卸载 ---
 
 # 桌面放不了备份时，备份绝不能跟着安装文件夹一起被删
