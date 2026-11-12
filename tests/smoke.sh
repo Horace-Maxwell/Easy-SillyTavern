@@ -139,12 +139,19 @@ EST_ANSWERS=1 run restore > "$work/restore.log" 2>&1
 check "从备份恢复" test -f "$chat"
 
 # Windows 版做的备份是 zip，换电脑时要能恢复
-if command -v python3 >/dev/null 2>&1; then
-    mkdir -p "$work/zip/data/default-user/chats/bob"
-    echo '{"mes":"from windows"}' > "$work/zip/data/default-user/chats/bob/b.jsonl"
-    (cd "$work/zip" && python3 -m zipfile -c "$EST_DESKTOP/SillyTavern-backup-20300101-000000.zip" data)
+zip="$EST_DESKTOP/SillyTavern-backup-20300101-000000.zip"
+mkdir -p "$work/zip/data/default-user/chats/bob"
+echo '{"mes":"from windows"}' > "$work/zip/data/default-user/chats/bob/b.jsonl"
+# Mac 用系统自带的 ditto 打包：HOME 被换掉后，系统的 python3 不一定跑得起来
+if [ "$(uname -s)" = Darwin ]; then
+    (cd "$work/zip" && ditto -c -k data "$zip" --keepParent) 2>/dev/null
+elif command -v python3 >/dev/null 2>&1; then
+    (cd "$work/zip" && python3 -m zipfile -c "$zip" data) 2>/dev/null
+fi
+if [ -s "$zip" ]; then
+    # 恢复时选第 1 个，也就是最新的那个
     sleep 1
-    touch "$EST_DESKTOP/SillyTavern-backup-20300101-000000.zip"
+    touch "$zip"
     EST_ANSWERS=1 run restore > "$work/restore-zip.log" 2>&1
     check "恢复 Windows 版的 zip 备份" test -f "$EST_HOME/data/default-user/chats/bob/b.jsonl"
 fi
@@ -196,6 +203,12 @@ case "$(uname -s)" in
 esac
 
 echo ""
+if [ "$fails" -gt 0 ]; then
+    for f in "$work"/*.log; do
+        echo "--- $(basename "$f")"
+        tail -n 15 "$f"
+    done
+fi
 if [ "$fails" -eq 0 ]; then
     echo "全部通过"
 else
