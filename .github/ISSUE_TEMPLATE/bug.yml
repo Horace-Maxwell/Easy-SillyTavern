@@ -1,0 +1,31 @@
+name: 装不上 / 用不了 · Something's not working
+description: 安装器的问题发在这里。酒馆本身的问题请去官方。Installer problems only, please.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **别贴 API 密钥，也别传备份文件**，备份里有你的密钥和聊天记录。诊断报告可以放心贴。
+        **Don't paste API keys or attach backups.** The diagnostic report is safe to share.
+  - type: dropdown
+    id: device
+    attributes:
+      label: 你的设备 · Device
+      options:
+        - Mac
+        - Windows
+        - Linux
+        - 安卓手机 · Android
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 · What happened
+      description: 在哪一步出的问题？窗口的截图最有用，直接把图片拖进来。Which step? A screenshot of the window helps most.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: 诊断报告 · Diagnostic report
+      description: 工具箱选 7「诊断」，把生成的文件拖进来。还没装好就没有报告，空着就行。Toolbox → 7. Leave this empty if the install never finished.

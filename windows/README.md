@@ -1,6 +1,6 @@
 # Windows 版
 
-用户怎么装见[总 README](../README.md#windows-安装3-步)。这里是给改脚本的人看的。
+用户怎么装见[总 README](../README.md#-windows-安装)。这里是给改脚本的人看的。
 
 | 文件 | 干什么用 |
 | --- | --- |
@@ -27,3 +27,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\easy-st.ps1 instal
 ```
 
 路径里故意带空格和中文，能测出中文用户名的问题。
+
+完整走一遍（安装、启动、隐私、备份恢复、更新、卸载）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\smoke.ps1
+```

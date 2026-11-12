@@ -44,5 +44,5 @@
     <text x="48" y="36" class="mono" font-size="22" fill="#fff4e2">bash -c "$(curl -fsSL …/easy-st.sh)"</text>
   </g>
 
-  <text x="90" y="356" class="sans" font-size="22" fill="#b89c80">macOS 10.15+ · Windows 10 / 11 · no admin password · no Git or Node.js</text>
+  <text x="90" y="356" class="sans" font-size="22" fill="#b89c80">Mac · Windows · Linux · Android · no admin password · no Git or Node.js</text>
 </svg>
