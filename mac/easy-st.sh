@@ -1059,7 +1059,9 @@ $d/$p-*.$ext"
         done
     done
     # shellcheck disable=SC2086
-    list="$(IFS=$'\n'; ls -1t $cands 2>/dev/null | awk '!seen[$0]++')"
+    # 先挑出真的存在的文件再按时间排：把不存在的名字也交给 ls 的话，有的系统就不按时间排了。
+    # /dev/null 垫底：一个备份都没有时，Linux 的 xargs 也会运行 ls，没有它就会把当前文件夹列出来
+    list="$(IFS=$'\n'; for f in $cands; do [ -f "$f" ] && printf '%s\0' "$f"; done | xargs -0 ls -1t /dev/null 2>/dev/null | grep -v '^/dev/null$' | awk '!seen[$0]++')"
     [ -n "$list" ] || { info "还没有备份。" "No backups yet."; return 0; }
     n="$(printf '%s\n' "$list" | wc -l | tr -d ' ')"
     step "选一个备份恢复（越靠上越新）" "Pick a backup to restore (newest first)"

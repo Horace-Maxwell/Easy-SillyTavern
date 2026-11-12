@@ -204,6 +204,7 @@ esac
 
 echo ""
 if [ "$fails" -gt 0 ]; then
+    ls -lT "$EST_HOME/backups" "$EST_DESKTOP" 2>/dev/null || ls -l --full-time "$EST_HOME/backups" "$EST_DESKTOP" 2>/dev/null
     for f in "$work"/*.log; do
         echo "--- $(basename "$f")"
         tail -n 15 "$f"
